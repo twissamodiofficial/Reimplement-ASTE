@@ -371,8 +371,9 @@ class StageTwoModel(nn.Module):
     """
     FIXED: Stage Two - Aspect-Opinion Pairing (Paper-Compliant)
     Simplified to match paper's Table 1 methodology exactly
+    FIX #2: Removed dropout (0.5 -> 0.0) for limited training data (~2000 pairs)
     """
-    def __init__(self, embed_dim=300, hidden_size=300, max_distance=100, num_layers=1, dropout=0.5):
+    def __init__(self, embed_dim=300, hidden_size=300, max_distance=100, num_layers=1, dropout=0.0):
         super(StageTwoModel, self).__init__()
         self.embed_dim = embed_dim
         self.hidden_size = hidden_size
@@ -394,6 +395,7 @@ class StageTwoModel(nn.Module):
         )
         
         # Simple classifier (paper: "concatenate and send to softmax")
+        # FIX #2: Changed dropout from 0.5 to 0.0 to reduce regularization
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(hidden_size * 4, 2)

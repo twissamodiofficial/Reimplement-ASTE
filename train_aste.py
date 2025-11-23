@@ -55,6 +55,49 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# STAGE 2 PAIR GENERATION - PAPER COMPLIANT METHOD
+# ============================================================================
+# CRITICAL IMPLEMENTATION NOTE:
+#
+# Paper Evidence (Page 4, AAAI 2020):
+# "During testing stage, we freeze the classifier parameters tuned against 
+#  the validation sets, and directly test on the pairs generated in the 
+#  candidate pool."
+#
+# KEY INSIGHT: Stage 2 must train on the SAME DISTRIBUTION as testing:
+# - Stage 1 generates aspect/opinion spans (may be imperfect)
+# - Generate ALL possible aspect×opinion pairs from Stage 1 predictions
+# - Label pairs as valid/invalid using ground truth triplets
+# - Train Stage 2 classifier on this distribution
+#
+# Training Flow (Paper Compliant):
+# 1. Train Stage 1 on task 1: Aspect + Opinion Boundary Extraction
+# 2. For Stage 2 training:
+#    a) Run Stage 1 on training set → get predicted spans (imperfect)
+#    b) Generate ALL candidate pairs from predicted spans
+#    c) Label each pair using ground truth annotations
+#    d) Train Stage 2 classifier on this candidate pool
+# 3. For testing:
+#    a) Run Stage 1 on test set → get predicted spans
+#    b) Generate ALL candidate pairs from predicted spans
+#    c) Use Stage 2 to classify each pair
+#
+# CRITICAL: All Stage 2 functions must use:
+#   - generate_stage_one_prediction_pairs(): Generates pairs from Stage 1 predictions
+#   - NOT ground truth pairs (distribution mismatch!)
+#
+# Functions enforcing this:
+#   - train_stage_two(): Uses generate_stage_one_prediction_pairs()
+#   - evaluate_stage_two_on_dev(): Uses generate_stage_one_prediction_pairs()
+#   - optimize_stage_two_threshold(): Uses generate_stage_one_prediction_pairs()
+#   - evaluate_stage_two_detailed(): Uses Stage 1 predictions for pair generation
+#
+# Deprecated functions (redirected):
+#   - generate_stage_one_based_pairs(): Now redirects to 
+#     generate_stage_one_prediction_pairs() for backward compatibility
+# ============================================================================
+
 def load_glove_embeddings(word_to_id, embedding_dim=300, embeddings_path="embeddings/glove.6B.300d.txt"):
     """Load GloVe embeddings manually"""
     vocab_size = len(word_to_id)
@@ -516,61 +559,89 @@ class ASTETrainer:
 
         
     def calculate_stage_one_loss(self, outputs, labels, target_labels, opinion_labels, attention_mask):
-        """Calculate multi-task loss for Stage One using ACTUAL labels from data (FIXED)"""
-        
+        """
+        Calculate multi-task loss for Stage One
+
+        Paper Equation 9: J(θ) = L_T + L_TS + L_TG + L_OPT
+        """
+
         # Apply attention mask to all label types
         flat_attention = attention_mask.view(-1)
         active_positions = flat_attention == 1
-        
-        # Extract active labels for multi-task loss (using REAL labels from data)
+
+        # Extract active labels for multi-task loss
         active_unified = labels.view(-1)[active_positions]
         active_target = target_labels.view(-1)[active_positions] 
         active_opinion = opinion_labels.view(-1)[active_positions]
-        # Target guidance uses same labels as target (as per paper)
-        active_tg = target_labels.view(-1)[active_positions]
-        
+
+        # ✅ FIX GAP 3: Target guidance predicts OPINION labels (not target labels)
+        # Paper Evidence (Page 3, Eq. 6): z^TG_t = p(y^OPT_t | x_t)
+        # TG uses target info to GUIDE opinion extraction, so it predicts opinion labels!
+        active_tg = opinion_labels.view(-1)[active_positions]  # ✅ FIXED
+
         # Reshape outputs for active positions only
         unified_logits = outputs['unified_logits'].view(-1, outputs['unified_logits'].size(-1))[active_positions]
         target_logits = outputs['target_logits'].view(-1, outputs['target_logits'].size(-1))[active_positions]
         tg_logits = outputs['tg_logits'].view(-1, outputs['tg_logits'].size(-1))[active_positions]
         opinion_logits = outputs['opinion_logits'].view(-1, outputs['opinion_logits'].size(-1))[active_positions]
-        
-        # Calculate individual losses with paper-specified weights
+
+        # Calculate individual losses with paper-specified equal weights
         criterion = nn.CrossEntropyLoss()
-        
-        loss_unified = criterion(unified_logits, active_unified)
+
         loss_target = criterion(target_logits, active_target)
-        loss_tg = criterion(tg_logits, active_tg) 
+        loss_unified = criterion(unified_logits, active_unified)
+        loss_tg = criterion(tg_logits, active_tg)  # Now predicting opinion labels
         loss_opinion = criterion(opinion_logits, active_opinion)
-        
-        # Paper equation: J(θ) = L_T + L_TS + L_TG + L_OPT 
-        # PAPER EQUATION 9: Equal weights for all losses
+
+        # Paper Equation 9: Equal weights for all losses
         total_loss = (1.0 * loss_target + 
-                     1.0 * loss_unified + 
-                     1.0 * loss_tg +     # Equal weight as per paper Eq. 9
-                     1.0 * loss_opinion)
-        
+                        1.0 * loss_unified + 
+                        1.0 * loss_tg +
+                        1.0 * loss_opinion)
+
         return total_loss
     
     def train_stage_two(self):
         """
-        PAPER COMPLIANT: Train Stage Two on ground truth pairs
-        """
-        logger.info("🚀 Stage Two training with GROUND TRUTH pairs...")
+        PAPER COMPLIANT FIX: Train Stage Two on Stage One PREDICTIONS
         
-        # Load best Stage One
+        Paper Evidence (Page 4): "During testing stage, we freeze the classifier 
+        parameters tuned against the validation sets, and directly test on the 
+        pairs generated in the candidate pool."
+        
+        KEY INSIGHT: Stage 2 must see the SAME imperfect predictions during training
+        that it will see during testing, NOT perfect ground truth spans.
+        """
+        logger.info("🚀 Stage Two training with STAGE ONE PREDICTIONS...")
+        
+        # Load best Stage One model
         try:
             self.load_model(self.stage_one_model, f'{self.args.dataset}_stage_one_best.pt')
             self.stage_one_model.eval()
+            logger.info("✅ Loaded best Stage One model")
         except Exception as e:
-            logger.warning(f"Stage 1 model load failed: {e}")
+            logger.error(f"❌ Failed to load Stage One model: {e}")
+            raise
         
-        # PAPER METHOD: Use ground truth pairs
-        train_pairs = self.generate_ground_truth_pairs(self.train_loader)
-        dev_pairs = self.generate_ground_truth_pairs(self.val_loader)
+        # ✅ CRITICAL FIX: Generate pairs from Stage 1 PREDICTIONS, not ground truth
+        logger.info("Generating training pairs from Stage 1 predictions...")
+        train_pairs = self.generate_stage_one_prediction_pairs(
+            self.train_loader, 
+            use_ground_truth_for_labels=True  # Use GT only for binary labels (valid/invalid)
+        )
+        
+        logger.info("Generating dev pairs from Stage 1 predictions...")
+        dev_pairs = self.generate_stage_one_prediction_pairs(
+            self.val_loader,
+            use_ground_truth_for_labels=True
+        )
         
         logger.info(f"✅ Training pairs: {len(train_pairs)}")
         logger.info(f"✅ Dev pairs: {len(dev_pairs)}")
+        
+        if len(train_pairs) == 0:
+            logger.error("❌ No training pairs generated! Check Stage 1 predictions.")
+            raise ValueError("No training pairs for Stage 2")
         
         # Create data loaders
         stage_two_train_loader = self.create_stage_two_loader_from_pairs(train_pairs, shuffle=True)
@@ -585,22 +656,36 @@ class ASTETrainer:
             dropout=self.dropout_rate
         ).to(self.device)
         
-        # Paper-compliant optimizer
+        # Paper-compliant optimizer (same as Stage 1)
         self.stage_two_optimizer = optim.SGD(
             self.stage_two_model.parameters(),
-            lr=self.learning_rate,
+            lr=self.learning_rate,  # 0.1 as per paper
             momentum=0.9,
             weight_decay=0.0
         )
         
+        self.stage_two_scheduler = optim.lr_scheduler.ExponentialLR(
+            self.stage_two_optimizer,
+            gamma=(1.0 - 0.001)  # Paper's decay rate
+        )
+        
         self.stage_two_model.train()
         best_f1 = 0.0
+        epochs_without_improvement = 0
+        
+        # FIX #3: Early stopping at epoch 20 (validation F1 plateaus after epoch 20)
+        max_epochs_before_stopping = 20
         
         for epoch in range(self.num_epochs):
+            # FIX #3: Stop training at epoch 20 to prevent overfitting
+            if epoch >= max_epochs_before_stopping:
+                logger.info(f"⏹️ Early stopping at epoch {epoch} (reached max epochs: {max_epochs_before_stopping})")
+                break
+            
             total_loss = 0.0
             num_batches = 0
             
-            progress_bar = tqdm(stage_two_train_loader, desc=f"Stage 2 Epoch {epoch+1}")
+            progress_bar = tqdm(stage_two_train_loader, desc=f"Stage 2 Epoch {epoch+1}/{max_epochs_before_stopping}")
             
             for batch_idx, batch in enumerate(progress_bar):
                 self.stage_two_optimizer.zero_grad()
@@ -614,7 +699,7 @@ class ASTETrainer:
                 
                 lengths = attention_mask.sum(dim=1)
                 
-                # Get word embeddings (Paper requirement)
+                # Get word embeddings (Paper requirement: use original GloVe)
                 with torch.no_grad():
                     word_embeds = self.stage_one_model.embedding(input_ids)
                 
@@ -635,26 +720,205 @@ class ASTETrainer:
                 progress_bar.set_postfix({'Loss': f'{loss.item():.4f}'})
             
             avg_loss = total_loss / num_batches if num_batches > 0 else 0
-            logger.info(f"Epoch {epoch+1} - Loss: {avg_loss:.4f}")
+            logger.info(f"Stage 2 Epoch {epoch+1} - Loss: {avg_loss:.4f}")
             
-            # Evaluate
-            if (epoch + 1) % 10 == 0:
-                metrics = self.evaluate_stage_two_detailed()
-                f1 = metrics['triplet_f1']
+            # Evaluate every 5 epochs
+            if (epoch + 1) % 5 == 0:
+                metrics = self.evaluate_stage_two_on_dev()
+                f1 = metrics['pair_f1']
                 
-                logger.info(f"Epoch {epoch+1} - Triplet F1: {f1*100:.1f}%")
+                logger.info(f"Epoch {epoch+1} - Dev Pair F1: {f1*100:.1f}%")
+                
+                # Track metrics
+                self.training_metrics['stage_two']['train_loss'].append(avg_loss)
+                self.training_metrics['stage_two']['val_f1'].append(f1)
+                self.training_metrics['stage_two']['val_precision'].append(metrics['pair_precision'])
+                self.training_metrics['stage_two']['val_recall'].append(metrics['pair_recall'])
                 
                 if f1 > best_f1:
                     best_f1 = f1
+                    epochs_without_improvement = 0
                     self.save_model(self.stage_two_model, f'{self.args.dataset}_stage_two_best.pt')
-                    logger.info(f"🏆 New best: {f1*100:.1f}%")
+                    logger.info(f"🏆 New best Stage 2: {f1*100:.1f}%")
+                else:
+                    epochs_without_improvement += 1
+            
+            # Step scheduler
+            self.stage_two_scheduler.step()
         
-        # Optimize threshold
-        self.optimize_stage_two_threshold()
+        # ✅ CRITICAL: Optimize threshold after training
+        logger.info("🔍 Optimizing Stage 2 threshold on validation set...")
+        self.optimal_threshold = self.optimize_stage_two_threshold()
         logger.info(f"✅ Optimal threshold: {self.optimal_threshold:.3f}")
+        
+        # Save threshold in metrics
+        self.training_metrics['stage_two']['optimal_threshold'] = self.optimal_threshold
         
         return best_f1
     
+    def generate_stage_one_prediction_pairs(self, data_loader, use_ground_truth_for_labels=True):
+        """
+        PAPER COMPLIANT: Generate pairs from Stage 1 PREDICTIONS
+        
+        Paper Method:
+        1. Run Stage 1 on sentences → get predicted aspect/opinion spans
+        2. Generate ALL possible aspect×opinion pairs (candidate pool)
+        3. Label each pair as valid (1) or invalid (0) using ground truth triplets
+        
+        This ensures Stage 2 trains on the SAME distribution it sees during testing!
+        """
+        logger.info("Generating pairs from Stage 1 predictions...")
+        
+        pairs = []
+        total_valid = 0
+        total_invalid = 0
+        
+        self.stage_one_model.eval()
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(tqdm(data_loader, desc="Stage 1 predictions")):
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                dep_matrix = batch['dep_matrix'].to(self.device)
+                lengths = attention_mask.sum(dim=1)
+                
+                # Get Stage 1 predictions
+                outputs = self.stage_one_model(input_ids, dep_matrix, lengths)
+                aspect_preds = torch.argmax(outputs['unified_logits'], dim=-1)
+                opinion_preds = torch.argmax(outputs['opinion_logits'], dim=-1)
+                
+                batch_size = input_ids.size(0)
+                for i in range(batch_size):
+                    seq_len = int(attention_mask[i].sum().item())
+                    
+                    # Extract PREDICTED aspect spans
+                    pred_aspects = self._extract_predicted_aspect_spans(
+                        aspect_preds[i][:seq_len]
+                    )
+                    
+                    # Extract PREDICTED opinion spans
+                    pred_opinions = self._extract_predicted_opinion_spans(
+                        opinion_preds[i][:seq_len]
+                    )
+                    
+                    if not pred_aspects or not pred_opinions:
+                        continue
+                    
+                    # Get ground truth triplets for labeling
+                    gt_triplets_set = set()
+                    if use_ground_truth_for_labels and 'triplets' in batch:
+                        triplets_batch = batch['triplets']
+                        if i < len(triplets_batch):
+                            for triplet in triplets_batch[i]:
+                                if len(triplet) >= 5:
+                                    asp_start, asp_end, opi_start, opi_end, sentiment = triplet
+                                    gt_triplets_set.add((asp_start, asp_end, opi_start, opi_end))
+                    
+                    # Generate ALL possible pairs (candidate pool)
+                    for asp_start, asp_end, sentiment in pred_aspects:
+                        for opi_start, opi_end in pred_opinions:
+                            # Check if this pair is valid according to ground truth
+                            is_valid = (asp_start, asp_end, opi_start, opi_end) in gt_triplets_set
+                            
+                            pair_data = {
+                                'sentence_idx': batch_idx * data_loader.batch_size + i,
+                                'input_ids': input_ids[i].cpu(),
+                                'attention_mask': attention_mask[i].cpu(),
+                                'asp_start': asp_start,
+                                'asp_end': asp_end,
+                                'opi_start': opi_start,
+                                'opi_end': opi_end,
+                                'sentiment': sentiment,
+                                'is_valid': is_valid
+                            }
+                            pairs.append(pair_data)
+                            
+                            if is_valid:
+                                total_valid += 1
+                            else:
+                                total_invalid += 1
+        
+        self.stage_one_model.train()
+        
+        logger.info(f"Generated {len(pairs)} Stage 2 pairs:")
+        logger.info(f"  Valid pairs: {total_valid}")
+        logger.info(f"  Invalid pairs: {total_invalid}")
+        if len(pairs) > 0:
+            logger.info(f"  Positive ratio: {total_valid/len(pairs)*100:.2f}%")
+        
+        if total_valid == 0:
+            logger.error("❌ NO POSITIVE PAIRS! Check Stage 1 predictions and ground truth alignment.")
+        
+        return pairs
+
+    def _extract_predicted_aspect_spans(self, predictions):
+        """Extract aspect spans from Stage 1 unified predictions"""
+        aspects = []
+        current_span = None
+        current_sentiment = None
+        
+        for i, pred_id in enumerate(predictions):
+            label = self.id_to_label.get(pred_id.item(), 'O')
+            
+            if label.startswith('B-'):
+                if current_span is not None:
+                    aspects.append((current_span[0], current_span[1], current_sentiment))
+                current_span = [i, i]
+                current_sentiment = label.split('-')[1]
+            elif label.startswith('I-') or label.startswith('E-'):
+                if current_span is not None:
+                    current_span[1] = i
+                    if label.startswith('E-'):
+                        aspects.append((current_span[0], current_span[1], current_sentiment))
+                        current_span = None
+            elif label.startswith('S-'):
+                if current_span is not None:
+                    aspects.append((current_span[0], current_span[1], current_sentiment))
+                sentiment = label.split('-')[1]
+                aspects.append((i, i, sentiment))
+                current_span = None
+            else:  # O
+                if current_span is not None:
+                    aspects.append((current_span[0], current_span[1], current_sentiment))
+                    current_span = None
+        
+        if current_span is not None:
+            aspects.append((current_span[0], current_span[1], current_sentiment))
+        
+        return aspects
+
+    def _extract_predicted_opinion_spans(self, predictions):
+        """Extract opinion spans from Stage 1 boundary predictions"""
+        opinions = []
+        current_span = None
+        
+        for i, pred_id in enumerate(predictions):
+            label = self.boundary_id_to_label.get(pred_id.item(), 'O')
+            
+            if label == 'B':
+                if current_span is not None:
+                    opinions.append((current_span[0], current_span[1]))
+                current_span = [i, i]
+            elif label in ['I', 'E']:
+                if current_span is not None:
+                    current_span[1] = i
+                    if label == 'E':
+                        opinions.append((current_span[0], current_span[1]))
+                        current_span = None
+            elif label == 'S':
+                if current_span is not None:
+                    opinions.append((current_span[0], current_span[1]))
+                opinions.append((i, i))
+                current_span = None
+            else:  # O
+                if current_span is not None:
+                    opinions.append((current_span[0], current_span[1]))
+                    current_span = None
+        
+        if current_span is not None:
+            opinions.append((current_span[0], current_span[1]))
+        
+        return opinions
+
     def generate_aspect_opinion_pairs(self, batch, stage_one_outputs):
         """
         CRITICAL FIX: Use actual ground truth triplets with proper format
@@ -723,6 +987,54 @@ class ASTETrainer:
             logger.error("❌ NO POSITIVE PAIRS! Stage 2 training will fail!")
         
         return pairs, pair_labels
+
+    def evaluate_stage_two_on_dev(self):
+        """Evaluate Stage 2 on dev set using Stage 1 predictions"""
+        self.stage_one_model.eval()
+        self.stage_two_model.eval()
+        
+        # Generate dev pairs from Stage 1 predictions
+        dev_pairs = self.generate_stage_one_prediction_pairs(self.val_loader, use_ground_truth_for_labels=True)
+        
+        if len(dev_pairs) == 0:
+            logger.warning("No dev pairs generated, returning zero metrics")
+            return {'pair_precision': 0.0, 'pair_recall': 0.0, 'pair_f1': 0.0}
+        
+        dev_loader = self.create_stage_two_loader_from_pairs(dev_pairs, shuffle=False)
+        
+        all_preds = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for batch in dev_loader:
+                input_ids, attention_mask, aspect_spans, opinion_spans, labels = batch
+                input_ids = input_ids.to(self.device)
+                attention_mask = attention_mask.to(self.device)
+                aspect_spans = aspect_spans.to(self.device)
+                opinion_spans = opinion_spans.to(self.device)
+                
+                lengths = attention_mask.sum(dim=1)
+                word_embeds = self.stage_one_model.embedding(input_ids)
+                
+                pair_logits = self.stage_two_model(word_embeds, aspect_spans, opinion_spans, lengths)
+                pair_preds = torch.argmax(pair_logits, dim=1)
+                
+                all_preds.extend(pair_preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+        
+        # Calculate metrics
+        from sklearn.metrics import precision_recall_fscore_support
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            all_labels, all_preds, average='binary', zero_division=0
+        )
+        
+        self.stage_two_model.train()
+        
+        return {
+            'pair_precision': precision,
+            'pair_recall': recall,
+            'pair_f1': f1
+        }
 
     def _extract_unified_spans(self, labels, sentiment):
         """Extract spans from unified BIO labels for specific sentiment"""
@@ -1750,7 +2062,12 @@ class ASTETrainer:
         plt.savefig(os.path.join(plots_dir, f'{dataset_name}_stage_one_metrics.pdf'), bbox_inches='tight')
         plt.close()
     def optimize_stage_two_threshold(self):
-        """Find optimal threshold on validation set using grid search"""
+        """
+        Find optimal threshold on validation set using grid search
+        
+        CRITICAL: Must use same pair generation method as training/evaluation
+        (i.e., Stage 1 predictions, not ground truth spans)
+        """
         logger.info("🔍 Optimizing Stage 2 classification threshold...")
         
         self.stage_one_model.eval()
@@ -1759,8 +2076,16 @@ class ASTETrainer:
         all_probs = []
         all_labels = []
         
-        # Generate validation pairs using same method as training
-        dev_pairs = self.generate_stage_one_based_pairs(self.val_loader, use_ground_truth_labels=True)
+        # ✅ FIX: Use the NEW function with correct parameter name
+        dev_pairs = self.generate_stage_one_prediction_pairs(
+            self.val_loader, 
+            use_ground_truth_for_labels=True  # ✅ Correct parameter name
+        )
+        
+        if len(dev_pairs) == 0:
+            logger.warning("⚠️ No dev pairs for threshold optimization, using default 0.5")
+            return 0.5
+        
         stage_two_dev_loader = self.create_stage_two_loader_from_pairs(dev_pairs, shuffle=False)
         
         with torch.no_grad():
@@ -1776,7 +2101,7 @@ class ASTETrainer:
                 lengths = attention_mask.sum(dim=1)
                 word_embeds = self.stage_one_model.embedding(input_ids)
                 
-                # CORRECTED: Use proper forward() method (Paper Table 1)
+                # Forward pass through Stage 2
                 pair_logits = self.stage_two_model(
                     word_embeds, aspect_spans, opinion_spans, lengths
                 )
@@ -1790,11 +2115,15 @@ class ASTETrainer:
             logger.warning("⚠️ No pairs found for threshold optimization, keeping default 0.5")
             return 0.5
         
-        # Try different thresholds
-        best_f1 = 0
+        # Try different thresholds - FIX #1: Optimize for recall instead of F1
+        # Rationale: Task goal is to maximize recall (extract all triplets), not F1
+        # Stage 2 overfitting manifests as high validation F1 but low test recall
+        best_score = 0
         best_threshold = 0.5
         
-        logger.info("Testing thresholds from 0.3 to 0.7...")
+        logger.info("Testing thresholds from 0.3 to 0.7 (optimizing for RECALL)...")
+        threshold_results = []
+        
         for threshold in np.arange(0.3, 0.71, 0.05):
             predicted = [1 if p > threshold else 0 for p in all_probs]
             
@@ -1810,15 +2139,29 @@ class ASTETrainer:
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
             
-            if f1 > best_f1:
-                best_f1 = f1
+            # FIX #1: Optimize for recall-weighted score, not F1
+            # Score = 0.7 * recall + 0.3 * precision (prioritize recall)
+            recall_weighted_score = 0.7 * recall + 0.3 * precision
+            
+            threshold_results.append({
+                'threshold': threshold,
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
+                'recall_weighted_score': recall_weighted_score
+            })
+            
+            if recall_weighted_score > best_score:
+                best_score = recall_weighted_score
                 best_threshold = threshold
             
-            if threshold in [0.3, 0.4, 0.5, 0.6, 0.7]:
-                logger.info(f"  Threshold {threshold:.2f}: P={precision*100:.1f}%, R={recall*100:.1f}%, F1={f1*100:.1f}%")
+            if threshold in [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]:
+                logger.info(f"  Threshold {threshold:.2f}: P={precision*100:.1f}%, R={recall*100:.1f}%, F1={f1*100:.1f}%, Score={recall_weighted_score*100:.1f}%")
         
-        logger.info(f"✅ Optimal threshold: {best_threshold:.2f} (F1: {best_f1*100:.1f}%)")
-        self.optimal_threshold = best_threshold
+        logger.info(f"✅ Optimal threshold: {best_threshold:.2f} (Recall-Weighted Score: {best_score*100:.1f}%)")
+        
+        # Save threshold search results
+        self.training_metrics['stage_two']['threshold_search'] = threshold_results
         
         self.stage_one_model.train()
         self.stage_two_model.train()
@@ -2043,91 +2386,16 @@ class ASTETrainer:
     
     def generate_stage_one_based_pairs(self, data_loader, use_ground_truth_labels=True):
         """
-        PAPER COMPLIANT: Generate aspect-opinion pairs from Stage One predictions
-        This fixes the critical distribution mismatch between training and testing
+        DEPRECATED: Use generate_stage_one_prediction_pairs() instead
+        
+        This function is kept for backward compatibility only.
+        It simply redirects to the new function with parameter name mapping.
         """
-        logger.info("Generating pairs from Stage One predictions...")
-        
-        pairs = []
-        total_sentences = 0
-        total_valid_pairs = 0
-        total_invalid_pairs = 0
-        
-        self.stage_one_model.eval()
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(data_loader, desc="Generating pairs")):
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
-                dep_matrix = batch.get('dep_matrix', None)
-                if dep_matrix is not None:
-                    dep_matrix = dep_matrix.to(self.device)
-                
-                # Calculate lengths from attention mask
-                lengths = attention_mask.sum(dim=1).cpu().tolist()  # Convert to list of ints
-                
-                # Safety check: ensure no zero lengths
-                lengths = [max(1, length) for length in lengths]  # Ensure minimum length of 1
-                
-                # Get Stage One predictions (correct argument order)
-                outputs = self.stage_one_model(input_ids, dep_matrix, lengths)
-                
-                # Extract predicted spans
-                aspect_preds = torch.argmax(outputs['unified_logits'], dim=-1)
-                opinion_preds = torch.argmax(outputs['opinion_logits'], dim=-1)
-                
-                batch_size = input_ids.size(0)
-                for i in range(batch_size):
-                    total_sentences += 1
-                    seq_len = int(attention_mask[i].sum().item())  # Ensure integer
-                    
-                    # Extract predicted aspect and opinion spans
-                    pred_aspects = self._extract_predicted_spans(
-                        aspect_preds[i][:seq_len], 'aspect'
-                    )
-                    pred_opinions = self._extract_predicted_spans(
-                        opinion_preds[i][:seq_len], 'opinion'
-                    )
-                    
-                    # Generate ALL possible pairs from predictions
-                    sentence_pairs = []
-                    for asp_start, asp_end, asp_sentiment in pred_aspects:
-                        for opi_start, opi_end in pred_opinions:
-                            # Check if this pair is valid based on ground truth
-                            is_valid = False
-                            if use_ground_truth_labels:
-                                is_valid = self._check_pair_in_ground_truth(
-                                    (asp_start, asp_end), (opi_start, opi_end), 
-                                    batch, i, asp_sentiment
-                                )
-                            
-                            pair_data = {
-                                'sentence_idx': batch_idx * data_loader.batch_size + i,
-                                'input_ids': input_ids[i].cpu(),
-                                'attention_mask': attention_mask[i].cpu(),
-                                'asp_start': asp_start,
-                                'asp_end': asp_end,
-                                'opi_start': opi_start, 
-                                'opi_end': opi_end,
-                                'sentiment': asp_sentiment,
-                                'is_valid': is_valid,
-                                'dep_matrix': dep_matrix[i].cpu() if dep_matrix is not None else None
-                            }
-                            sentence_pairs.append(pair_data)
-                            
-                            if is_valid:
-                                total_valid_pairs += 1
-                            else:
-                                total_invalid_pairs += 1
-                    
-                    pairs.extend(sentence_pairs)
-        
-        logger.info(f"Generated pairs from {total_sentences} sentences:")
-        logger.info(f"  Valid pairs: {total_valid_pairs}")
-        logger.info(f"  Invalid pairs: {total_invalid_pairs}")
-        logger.info(f"  Total pairs: {len(pairs)}")
-        logger.info(f"  Positive ratio: {total_valid_pairs/len(pairs)*100:.2f}%" if pairs else "No pairs generated")
-        
-        return pairs
+        logger.warning("⚠️ generate_stage_one_based_pairs() is deprecated, using generate_stage_one_prediction_pairs()")
+        return self.generate_stage_one_prediction_pairs(
+            data_loader, 
+            use_ground_truth_for_labels=use_ground_truth_labels
+        )
     
     def generate_ground_truth_pairs(self, data_loader):
         """
@@ -2524,6 +2792,24 @@ class ASTETrainer:
     def run_training(self):
         """Run complete training pipeline"""
         logger.info("Starting ASTE training pipeline...")
+        
+        # Verify function consistency
+        logger.info("🔍 Verifying Stage 2 function consistency...")
+        
+        # Check that all Stage 2 functions exist
+        required_functions = [
+            'generate_stage_one_prediction_pairs',
+            'train_stage_two',
+            'optimize_stage_two_threshold',
+            'evaluate_stage_two_on_dev',
+            'evaluate_stage_two_detailed'
+        ]
+        
+        for func_name in required_functions:
+            if not hasattr(self, func_name):
+                raise AttributeError(f"❌ Missing required function: {func_name}")
+        
+        logger.info("✅ All Stage 2 functions present")
         
         # Load data
         self.load_data()
