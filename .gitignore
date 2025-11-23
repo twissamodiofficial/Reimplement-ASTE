@@ -1,0 +1,49 @@
+# Logs
+logs/
+*.log
+
+# Model outputs
+models/
+
+# Data files
+data/
+
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Embeddings (large files)
+embeddings/
+glove/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Training outputs
+*.pt
+*.pth
+checkpoint_*
+
+*.sh
+
+*.json
