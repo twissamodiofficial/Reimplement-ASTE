@@ -696,7 +696,7 @@ def create_dependency_matrix(sentences, nlp=None):
         List of adjacency matrices
     """
     if nlp is None:
-        nlp = spacy.load("en_core_web_sm")
+        nlp = spacy.load("en_core_web_lg")
     
     adj_matrices = []
     

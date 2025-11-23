@@ -2595,7 +2595,7 @@ class ASTEDataset(Dataset):
         self.label_to_id = label_to_id
         self.target_to_id = target_to_id
         import spacy
-        self.nlp = spacy.load("en_core_web_sm")
+        self.nlp = spacy.load("en_core_web_lg")
     
     def create_dependency_matrix(self, tokens):
         """Create dependency adjacency matrix from tokens"""
