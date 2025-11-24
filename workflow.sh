@@ -89,7 +89,7 @@ if [ "$DATASET_ARG" = "all" ]; then
             --dataset $DATASET \
             --data_dir "$SCRIPT_DIR/data" \
             --output_dir "$SCRIPT_DIR/models" \
-            --batch_size 32 \
+            --batch_size 16 \
             --num_epochs 40 \
             --learning_rate 0.1 \
             --dropout_rate 0.5 \
@@ -107,7 +107,7 @@ if [ "$DATASET_ARG" = "all" ]; then
                 --dataset $DATASET \
                 --data_dir "$SCRIPT_DIR/data" \
                 --model_dir "$SCRIPT_DIR/models" \
-                --batch_size 32
+                --batch_size 16
             
             if [ $? -eq 0 ]; then
                 echo "✅ Evaluation completed for $DATASET"
@@ -155,7 +155,7 @@ else
         --dataset $DATASET \
         --data_dir "$SCRIPT_DIR/data" \
         --output_dir "$SCRIPT_DIR/models" \
-        --batch_size 32 \
+        --batch_size 16 \
         --num_epochs 40 \
         --learning_rate 0.1 \
         --dropout_rate 0.5 \
@@ -175,7 +175,7 @@ else
             --dataset $DATASET \
             --data_dir "$SCRIPT_DIR/data" \
             --model_dir "$SCRIPT_DIR/models" \
-            --batch_size 32
+            --batch_size 16
         
         if [ $? -eq 0 ]; then
             echo "✅ Evaluation completed for $DATASET"
