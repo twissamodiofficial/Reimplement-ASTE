@@ -3,7 +3,10 @@ logs/
 *.log
 
 # Model outputs
-models/
+models/.*pt
+models/.*pth
+models/checkpoints/
+models/*_tensorboard/
 
 # Data files
 data/
@@ -43,7 +46,3 @@ Thumbs.db
 *.pt
 *.pth
 checkpoint_*
-
-*.sh
-
-*.json

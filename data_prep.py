@@ -16,7 +16,7 @@ class SemEvalParser:
     """Parser for SemEval XML format datasets"""
     
     def __init__(self, data_dir="data"):
-        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
+        self.nlp = spacy.load("en_core_web_lg")  # Upgraded to lg for better dependency parsing
         self.data_dir = data_dir
     
     def parse_xml_file(self, xml_path: str) -> List[Dict]:

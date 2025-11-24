@@ -98,23 +98,39 @@ logger = logging.getLogger(__name__)
 #     generate_stage_one_prediction_pairs() for backward compatibility
 # ============================================================================
 
-def load_glove_embeddings(word_to_id, embedding_dim=300, embeddings_path="embeddings/glove.6B.300d.txt"):
-    """Load GloVe embeddings manually"""
+def load_glove_embeddings(word_to_id, embedding_dim=300, embeddings_path="embeddings/glove.840B.300d.txt"):
+    """Load GloVe embeddings manually (840B for better coverage)"""
     vocab_size = len(word_to_id)
     embedding_matrix = np.random.uniform(-0.1, 0.1, (vocab_size, embedding_dim))
+    
+    # Try 840B first, fallback to 6B if not available
+    if not os.path.exists(embeddings_path):
+        logger.warning(f"GloVe 840B not found at {embeddings_path}, trying 6B version...")
+        embeddings_path = "embeddings/glove.6B.300d.txt"
     
     if os.path.exists(embeddings_path):
         logger.info(f"Loading GloVe embeddings from {embeddings_path}")
         found = 0
+        skipped = 0
         with open(embeddings_path, 'r', encoding='utf-8') as f:
             for line in f:
-                values = line.split()
-                word = values[0]
-                if word in word_to_id:
-                    idx = word_to_id[word]
-                    embedding_matrix[idx] = np.array(values[1:], dtype=np.float32)
-                    found += 1
+                try:
+                    values = line.split()
+                    if len(values) < embedding_dim + 1:
+                        skipped += 1
+                        continue
+                    word = values[0]
+                    if word in word_to_id:
+                        idx = word_to_id[word]
+                        embedding_matrix[idx] = np.array(values[1:], dtype=np.float32)
+                        found += 1
+                except (ValueError, IndexError) as e:
+                    # Skip malformed lines
+                    skipped += 1
+                    continue
         logger.info(f"Found embeddings for {found}/{vocab_size} words")
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} malformed lines in GloVe file")
     else:
         logger.warning(f"GloVe file not found: {embeddings_path}. Using random embeddings.")
     
@@ -163,7 +179,7 @@ class ASTETrainer:
         self.early_stop = False
         
         # PAPER COMPLIANCE: Initialize optimal threshold (will be set after Stage 2 training)
-        self.optimal_threshold = 0.28  # Lower default to improve recall (was 0.35)
+        self.optimal_threshold = 0.25  # Lowered for better recall (was 0.35, then 0.28)
         
         # Checkpointing and resume variables
         self.global_step = 0
@@ -1929,458 +1945,6 @@ class ASTETrainer:
             total_triplets += len(triplets)
         return total_triplets
     
-    def generate_training_plots(self):
-        """Generate comprehensive training visualization plots"""
-        logger.info("Generating training plots...")
-        
-        # Get dataset name for unique filenames
-        dataset_name = getattr(self.args, 'dataset', 'unknown')
-        
-        # Create plots directory
-        plots_dir = os.path.join(self.args.output_dir, f'{dataset_name}_plots')
-        os.makedirs(plots_dir, exist_ok=True)
-        
-        # Set up plot style
-        plt.style.use('seaborn-v0_8')
-        sns.set_palette("husl")
-        
-        # 1. Training Loss Curves
-        self.plot_training_losses(plots_dir, dataset_name)
-        
-        # 2. Stage One Metrics
-        self.plot_stage_one_metrics(plots_dir, dataset_name)
-        
-        # 3. Stage Two Metrics  
-        self.plot_stage_two_metrics(plots_dir, dataset_name)
-        
-        # 4. Combined Performance Overview
-        self.plot_performance_overview(plots_dir, dataset_name)
-        
-        # 5. Component Analysis
-        self.plot_component_analysis(plots_dir, dataset_name)
-        
-        logger.info(f"All plots saved to {plots_dir} with dataset prefix '{dataset_name}'")
-    
-    def plot_training_losses(self, plots_dir, dataset_name):
-        """Plot training loss curves for both stages"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        
-        # Stage 1 Loss
-        if self.training_metrics['stage_one']['train_loss']:
-            epochs = range(1, len(self.training_metrics['stage_one']['train_loss']) + 1)
-            ax1.plot(epochs, self.training_metrics['stage_one']['train_loss'], 
-                    'b-', linewidth=2, marker='o', markersize=4, alpha=0.8)
-            ax1.set_title('Stage 1 Training Loss', fontsize=14, fontweight='bold')
-            ax1.set_xlabel('Epoch')
-            ax1.set_ylabel('Loss')
-            ax1.grid(True, alpha=0.3)
-            ax1.set_yscale('log')
-        
-        # Stage 2 Loss
-        if self.training_metrics['stage_two']['train_loss']:
-            epochs = range(1, len(self.training_metrics['stage_two']['train_loss']) + 1)
-            ax2.plot(epochs, self.training_metrics['stage_two']['train_loss'], 
-                    'r-', linewidth=2, marker='s', markersize=4, alpha=0.8)
-            ax2.set_title('Stage 2 Training Loss', fontsize=14, fontweight='bold')
-            ax2.set_xlabel('Epoch')
-            ax2.set_ylabel('Loss')
-            ax2.grid(True, alpha=0.3)
-            ax2.set_yscale('log')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_training_losses.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_training_losses.pdf'), bbox_inches='tight')
-        plt.close()
-    
-    def plot_stage_one_metrics(self, plots_dir, dataset_name):
-        """Plot Stage One evaluation metrics"""
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        
-        metrics = self.training_metrics['stage_one']
-        eval_epochs = [i*10 for i in range(1, len(metrics['val_f1']) + 1)]
-        
-        if eval_epochs:
-            # F1, Precision, Recall
-            ax1.plot(eval_epochs, metrics['val_f1'], 'g-', linewidth=3, marker='o', label='F1', markersize=6)
-            ax1.plot(eval_epochs, metrics['val_precision'], 'b-', linewidth=2, marker='s', label='Precision', markersize=5)
-            ax1.plot(eval_epochs, metrics['val_recall'], 'r-', linewidth=2, marker='^', label='Recall', markersize=5)
-            ax1.set_title('Stage 1: Overall Performance', fontsize=14, fontweight='bold')
-            ax1.set_xlabel('Epoch')
-            ax1.set_ylabel('Score')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            ax1.set_ylim(0, 1)
-            
-            # Component F1 scores
-            ax2.plot(eval_epochs, metrics['aspect_f1'], 'purple', linewidth=2, marker='o', label='Aspect F1', markersize=5)
-            ax2.plot(eval_epochs, metrics['opinion_f1'], 'orange', linewidth=2, marker='s', label='Opinion F1', markersize=5)
-            ax2.set_title('Stage 1: Component F1 Scores', fontsize=14, fontweight='bold')
-            ax2.set_xlabel('Epoch')
-            ax2.set_ylabel('F1 Score')
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
-            ax2.set_ylim(0, 1)
-            
-            # Sentiment accuracy
-            ax3.plot(eval_epochs, metrics['sentiment_acc'], 'teal', linewidth=3, marker='D', markersize=6)
-            ax3.set_title('Stage 1: Sentiment Classification Accuracy', fontsize=14, fontweight='bold')
-            ax3.set_xlabel('Epoch')
-            ax3.set_ylabel('Accuracy')
-            ax3.grid(True, alpha=0.3)
-            ax3.set_ylim(0, 1)
-            
-            # Performance summary
-            final_metrics = {
-                'F1': metrics['val_f1'][-1] if metrics['val_f1'] else 0,
-                'Precision': metrics['val_precision'][-1] if metrics['val_precision'] else 0,
-                'Recall': metrics['val_recall'][-1] if metrics['val_recall'] else 0,
-                'Aspect F1': metrics['aspect_f1'][-1] if metrics['aspect_f1'] else 0,
-                'Opinion F1': metrics['opinion_f1'][-1] if metrics['opinion_f1'] else 0,
-                'Sentiment Acc': metrics['sentiment_acc'][-1] if metrics['sentiment_acc'] else 0
-            }
-            
-            bars = ax4.bar(final_metrics.keys(), final_metrics.values(), 
-                          color=['green', 'blue', 'red', 'purple', 'orange', 'teal'], alpha=0.7)
-            ax4.set_title('Stage 1: Final Performance Summary', fontsize=14, fontweight='bold')
-            ax4.set_ylabel('Score')
-            ax4.set_ylim(0, 1)
-            ax4.grid(True, alpha=0.3, axis='y')
-            
-            # Add value labels on bars
-            for bar in bars:
-                height = bar.get_height()
-                ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                        f'{height:.3f}', ha='center', va='bottom', fontweight='bold')
-            
-            plt.xticks(rotation=45)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_stage_one_metrics.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_stage_one_metrics.pdf'), bbox_inches='tight')
-        plt.close()
-    def optimize_stage_two_threshold(self):
-        """
-        Find optimal threshold on validation set using grid search
-        
-        CRITICAL: Must use same pair generation method as training/evaluation
-        (i.e., Stage 1 predictions, not ground truth spans)
-        """
-        logger.info("🔍 Optimizing Stage 2 classification threshold...")
-        
-        self.stage_one_model.eval()
-        self.stage_two_model.eval()
-        
-        all_probs = []
-        all_labels = []
-        
-        # ✅ FIX: Use the NEW function with correct parameter name
-        dev_pairs = self.generate_stage_one_prediction_pairs(
-            self.val_loader, 
-            use_ground_truth_for_labels=True  # ✅ Correct parameter name
-        )
-        
-        if len(dev_pairs) == 0:
-            logger.warning("⚠️ No dev pairs for threshold optimization, using default 0.5")
-            return 0.5
-        
-        stage_two_dev_loader = self.create_stage_two_loader_from_pairs(dev_pairs, shuffle=False)
-        
-        with torch.no_grad():
-            for batch in stage_two_dev_loader:
-                input_ids, attention_mask, aspect_spans, opinion_spans, labels = batch
-                input_ids = input_ids.to(self.device)
-                attention_mask = attention_mask.to(self.device)
-                aspect_spans = aspect_spans.to(self.device)
-                opinion_spans = opinion_spans.to(self.device)
-                labels = labels.to(self.device)
-                
-                # Calculate lengths and get word embeddings
-                lengths = attention_mask.sum(dim=1)
-                word_embeds = self.stage_one_model.embedding(input_ids)
-                
-                # Forward pass through Stage 2
-                pair_logits = self.stage_two_model(
-                    word_embeds, aspect_spans, opinion_spans, lengths
-                )
-                
-                pair_probs = torch.softmax(pair_logits, dim=1)[:, 1].cpu().numpy()
-                
-                all_probs.extend(pair_probs)
-                all_labels.extend(labels.cpu().numpy())
-        
-        if len(all_probs) == 0:
-            logger.warning("⚠️ No pairs found for threshold optimization, keeping default 0.5")
-            return 0.5
-        
-        # Try different thresholds - FIX #1: Optimize for recall instead of F1
-        # Rationale: Task goal is to maximize recall (extract all triplets), not F1
-        # Stage 2 overfitting manifests as high validation F1 but low test recall
-        best_score = 0
-        best_threshold = 0.5
-        
-        logger.info("Testing thresholds from 0.2 to 0.7 (optimizing for RECALL)...")
-        threshold_results = []
-        
-        for threshold in np.arange(0.20, 0.71, 0.05):
-            predicted = [1 if p > threshold else 0 for p in all_probs]
-            
-            # Calculate metrics
-            if sum(predicted) == 0:
-                continue
-                
-            tp = sum(p == 1 and l == 1 for p, l in zip(predicted, all_labels))
-            fp = sum(p == 1 and l == 0 for p, l in zip(predicted, all_labels))
-            fn = sum(p == 0 and l == 1 for p, l in zip(predicted, all_labels))
-            
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-            
-            # FIX #1: Optimize for recall-weighted score, not F1
-            # Score = 0.7 * recall + 0.3 * precision (prioritize recall)
-            recall_weighted_score = 0.7 * recall + 0.3 * precision
-            
-            threshold_results.append({
-                'threshold': threshold,
-                'precision': precision,
-                'recall': recall,
-                'f1': f1,
-                'recall_weighted_score': recall_weighted_score
-            })
-            
-            if recall_weighted_score > best_score:
-                best_score = recall_weighted_score
-                best_threshold = threshold
-            
-            if threshold in [0.20, 0.25, 0.30, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]:
-                logger.info(f"  Threshold {threshold:.2f}: P={precision*100:.1f}%, R={recall*100:.1f}%, F1={f1*100:.1f}%, Score={recall_weighted_score*100:.1f}%")
-        
-        logger.info(f"✅ Optimal threshold: {best_threshold:.2f} (Recall-Weighted Score: {best_score*100:.1f}%)")
-        
-        # Save threshold search results
-        self.training_metrics['stage_two']['threshold_search'] = threshold_results
-        
-        self.stage_one_model.train()
-        self.stage_two_model.train()
-        
-        return best_threshold
-    
-    def plot_stage_two_metrics(self, plots_dir, dataset_name):
-        """Plot Stage Two evaluation metrics"""
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        
-        metrics = self.training_metrics['stage_two']
-        eval_epochs = [i*10 for i in range(1, len(metrics['triplet_f1']) + 1)]
-        
-        if eval_epochs:
-            # Triplet metrics
-            ax1.plot(eval_epochs, metrics['triplet_f1'], 'darkgreen', linewidth=3, marker='o', label='Triplet F1', markersize=6)
-            ax1.plot(eval_epochs, metrics['val_precision'], 'darkblue', linewidth=2, marker='s', label='Triplet Precision', markersize=5)
-            ax1.plot(eval_epochs, metrics['val_recall'], 'darkred', linewidth=2, marker='^', label='Triplet Recall', markersize=5)
-            ax1.set_title('Stage 2: Triplet Extraction Performance', fontsize=14, fontweight='bold')
-            ax1.set_xlabel('Epoch')
-            ax1.set_ylabel('Score')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            ax1.set_ylim(0, 1)
-            
-            # Pairing accuracy
-            ax2.plot(eval_epochs, metrics['pairing_acc'], 'darkorange', linewidth=3, marker='D', markersize=6)
-            ax2.set_title('Stage 2: Aspect-Opinion Pairing Accuracy', fontsize=14, fontweight='bold')
-            ax2.set_xlabel('Epoch')
-            ax2.set_ylabel('Accuracy')
-            ax2.grid(True, alpha=0.3)
-            ax2.set_ylim(0, 1)
-            
-            # Paper comparison
-            paper_results = [0.5189, 0.435, 0.4679, 0.5362]  # From paper
-            datasets = ['14res', '14lap', '15res', '16res']
-            our_result = metrics['triplet_f1'][-1] if metrics['triplet_f1'] else 0
-            
-            x = range(len(datasets))
-            ax3.bar([i-0.2 for i in x], paper_results, 0.4, label='Paper Results', alpha=0.7, color='skyblue')
-            ax3.bar([i+0.2 for i in x], [our_result]*len(datasets), 0.4, label='Our Result', alpha=0.7, color='lightcoral')
-            ax3.set_title('Paper Comparison (Final Triplet F1)', fontsize=14, fontweight='bold')
-            ax3.set_xlabel('Dataset')
-            ax3.set_ylabel('Triplet F1 Score')
-            ax3.set_xticks(x)
-            ax3.set_xticklabels(datasets)
-            ax3.legend()
-            ax3.grid(True, alpha=0.3, axis='y')
-            ax3.set_ylim(0, 0.6)
-            
-            # Add value labels
-            for i, (paper, ours) in enumerate(zip(paper_results, [our_result]*len(datasets))):
-                ax3.text(i-0.2, paper + 0.01, f'{paper:.3f}', ha='center', va='bottom', fontsize=9)
-                ax3.text(i+0.2, ours + 0.01, f'{ours:.3f}', ha='center', va='bottom', fontsize=9)
-            
-            # Final metrics summary
-            final_metrics = {
-                'Triplet F1': metrics['triplet_f1'][-1] if metrics['triplet_f1'] else 0,
-                'Triplet Precision': metrics['val_precision'][-1] if metrics['val_precision'] else 0,
-                'Triplet Recall': metrics['val_recall'][-1] if metrics['val_recall'] else 0,
-                'Pairing Accuracy': metrics['pairing_acc'][-1] if metrics['pairing_acc'] else 0
-            }
-            
-            bars = ax4.bar(final_metrics.keys(), final_metrics.values(),
-                          color=['darkgreen', 'darkblue', 'darkred', 'darkorange'], alpha=0.7)
-            ax4.set_title('Stage 2: Final Performance Summary', fontsize=14, fontweight='bold')
-            ax4.set_ylabel('Score')
-            ax4.set_ylim(0, 1)
-            ax4.grid(True, alpha=0.3, axis='y')
-            
-            # Add value labels on bars
-            for bar in bars:
-                height = bar.get_height()
-                ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                        f'{height:.3f}', ha='center', va='bottom', fontweight='bold')
-            
-            plt.xticks(rotation=30)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_stage_two_metrics.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_stage_two_metrics.pdf'), bbox_inches='tight')
-        plt.close()
-    
-    def plot_performance_overview(self, plots_dir, dataset_name):
-        """Plot combined performance overview"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
-        
-        # Combined F1 progression
-        stage1_epochs = [i*10 for i in range(1, len(self.training_metrics['stage_one']['val_f1']) + 1)]
-        stage2_epochs = [i*10 + 120 for i in range(1, len(self.training_metrics['stage_two']['triplet_f1']) + 1)]  # Offset by stage 1 epochs
-        
-        if stage1_epochs:
-            ax1.plot(stage1_epochs, self.training_metrics['stage_one']['val_f1'], 
-                    'b-', linewidth=3, marker='o', label='Stage 1 F1', markersize=6)
-        if stage2_epochs:
-            ax1.plot(stage2_epochs, self.training_metrics['stage_two']['triplet_f1'], 
-                    'r-', linewidth=3, marker='s', label='Stage 2 Triplet F1', markersize=6)
-        
-        ax1.axvline(x=120, color='gray', linestyle='--', alpha=0.7, label='Stage Transition')
-        ax1.set_title('ASTE Training Progress (Both Stages)', fontsize=16, fontweight='bold')
-        ax1.set_xlabel('Training Epoch')
-        ax1.set_ylabel('F1 Score')
-        ax1.legend(fontsize=12)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_ylim(0, 1)
-        
-        # Paper benchmark comparison
-        paper_f1_range = [0.42, 0.54]  # Expected range from paper
-        our_final_f1 = self.training_metrics['stage_two']['triplet_f1'][-1] if self.training_metrics['stage_two']['triplet_f1'] else 0
-        
-        # Create benchmark visualization
-        categories = ['Paper Min', 'Our Result', 'Paper Max']
-        values = [paper_f1_range[0], our_final_f1, paper_f1_range[1]]
-        colors = ['lightblue', 'red' if our_final_f1 < paper_f1_range[0] else 'green', 'lightblue']
-        
-        bars = ax2.bar(categories, values, color=colors, alpha=0.8)
-        ax2.set_title('Final Performance vs Paper Benchmark', fontsize=16, fontweight='bold')
-        ax2.set_ylabel('Triplet F1 Score')
-        ax2.set_ylim(0, 0.6)
-        ax2.grid(True, alpha=0.3, axis='y')
-        
-        # Add value labels
-        for bar in bars:
-            height = bar.get_height()
-            ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                    f'{height:.3f}', ha='center', va='bottom', fontsize=12, fontweight='bold')
-        
-        # Add performance status
-        if our_final_f1 >= paper_f1_range[0]:
-            status_text = "✅ Performance within expected range"
-            status_color = 'green'
-        else:
-            status_text = "⚠️ Below expected range"
-            status_color = 'red'
-        
-        ax2.text(0.5, 0.9, status_text, transform=ax2.transAxes, 
-                ha='center', va='center', fontsize=12, fontweight='bold', 
-                color=status_color, bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_performance_overview.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_performance_overview.pdf'), bbox_inches='tight')
-        plt.close()
-    
-    def plot_component_analysis(self, plots_dir, dataset_name):
-        """Plot detailed component analysis"""
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # Component comparison (final values)
-        components = ['Aspect\nExtraction', 'Opinion\nExtraction', 'Sentiment\nClassification', 'Aspect-Opinion\nPairing']
-        
-        final_values = [
-            self.training_metrics['stage_one']['aspect_f1'][-1] if self.training_metrics['stage_one']['aspect_f1'] else 0,
-            self.training_metrics['stage_one']['opinion_f1'][-1] if self.training_metrics['stage_one']['opinion_f1'] else 0,
-            self.training_metrics['stage_one']['sentiment_acc'][-1] if self.training_metrics['stage_one']['sentiment_acc'] else 0,
-            self.training_metrics['stage_two']['pairing_acc'][-1] if self.training_metrics['stage_two']['pairing_acc'] else 0
-        ]
-        
-        bars = ax1.bar(components, final_values, 
-                      color=['purple', 'orange', 'teal', 'darkorange'], alpha=0.8)
-        ax1.set_title('Component Performance Analysis', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Score')
-        ax1.set_ylim(0, 1)
-        ax1.grid(True, alpha=0.3, axis='y')
-        
-        # Add value labels
-        for bar in bars:
-            height = bar.get_height()
-            ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                    f'{height:.3f}', ha='center', va='bottom', fontweight='bold')
-        
-        # Stage 1 component evolution
-        stage1_epochs = [i*10 for i in range(1, len(self.training_metrics['stage_one']['aspect_f1']) + 1)]
-        if stage1_epochs:
-            ax2.plot(stage1_epochs, self.training_metrics['stage_one']['aspect_f1'], 
-                    'purple', linewidth=2, marker='o', label='Aspect F1', markersize=5)
-            ax2.plot(stage1_epochs, self.training_metrics['stage_one']['opinion_f1'], 
-                    'orange', linewidth=2, marker='s', label='Opinion F1', markersize=5)
-            ax2.plot(stage1_epochs, self.training_metrics['stage_one']['sentiment_acc'], 
-                    'teal', linewidth=2, marker='^', label='Sentiment Acc', markersize=5)
-        
-        ax2.set_title('Stage 1: Component Learning Curves', fontsize=14, fontweight='bold')
-        ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Score')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        ax2.set_ylim(0, 1)
-        
-        # Model architecture summary
-        ax3.text(0.1, 0.9, 'ASTE Model Architecture', fontsize=16, fontweight='bold', transform=ax3.transAxes)
-        ax3.text(0.1, 0.8, f'• Stage 1: Multi-task Learning', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.7, f'• Stage 2: Aspect-Opinion Pairing', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.6, f'• Hidden Size: {self.hidden_size}', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.5, f'• Embedding: GloVe 300d', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.4, f'• Learning Rate: {self.learning_rate}', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.3, f'• Batch Size: {self.batch_size}', fontsize=12, transform=ax3.transAxes)
-        ax3.text(0.1, 0.2, f'• Total Parameters: ~5.5M', fontsize=12, transform=ax3.transAxes)
-        ax3.axis('off')
-        
-        # Training summary
-        ax4.text(0.1, 0.9, 'Training Summary', fontsize=16, fontweight='bold', transform=ax4.transAxes)
-        ax4.text(0.1, 0.8, f'• Total Epochs: {self.num_epochs * 2} (120 each stage)', fontsize=12, transform=ax4.transAxes)
-        ax4.text(0.1, 0.7, f'• Device: {self.device}', fontsize=12, transform=ax4.transAxes)
-        ax4.text(0.1, 0.6, f'• Vocab Size: {self.vocab_size}', fontsize=12, transform=ax4.transAxes)
-        
-        final_triplet_f1 = self.training_metrics['stage_two']['triplet_f1'][-1] if self.training_metrics['stage_two']['triplet_f1'] else 0
-        ax4.text(0.1, 0.5, f'• Final Triplet F1: {final_triplet_f1:.4f}', fontsize=12, fontweight='bold', transform=ax4.transAxes)
-        
-        paper_range = "42-54%"
-        ax4.text(0.1, 0.4, f'• Paper Range: {paper_range}', fontsize=12, transform=ax4.transAxes)
-        
-        status = "✅ Success" if final_triplet_f1 >= 0.42 else "⚠️ Below Target"
-        color = 'green' if final_triplet_f1 >= 0.42 else 'red'
-        ax4.text(0.1, 0.3, f'• Status: {status}', fontsize=12, fontweight='bold', color=color, transform=ax4.transAxes)
-        
-        ax4.axis('off')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_component_analysis.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(plots_dir, f'{dataset_name}_component_analysis.pdf'), bbox_inches='tight')
-        plt.close()
-    
     def generate_stage_one_based_pairs(self, data_loader, use_ground_truth_labels=True):
         """
         DEPRECATED: Use generate_stage_one_prediction_pairs() instead
@@ -2860,9 +2424,6 @@ class ASTETrainer:
         
         # Save training metrics
         self.save_training_metrics()
-        
-        # Generate comprehensive plots
-        self.generate_training_plots()
         
         # Close tensorboard writer
         self.writer.close()

@@ -29,8 +29,8 @@ from train_aste import ASTEDataset
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def load_optimal_threshold(model_dir, dataset_name, default_threshold=0.35):
-    """Load optimal threshold from training metrics"""
+def load_optimal_threshold(model_dir, dataset_name, default_threshold=0.25):
+    """Load optimal threshold from training metrics (lowered to 0.25 for better recall)"""
     try:
         metrics_file = os.path.join(model_dir, f'{dataset_name}_training_metrics.json')
         if os.path.exists(metrics_file):

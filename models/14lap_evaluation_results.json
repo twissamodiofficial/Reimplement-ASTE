@@ -1,0 +1,18 @@
+{
+  "token_precision": 0.4526227379348548,
+  "token_recall": 0.3927826977539641,
+  "token_f1": 0.4091983669522428,
+  "aspect_precision": 0.853195164075993,
+  "aspect_recall": 0.7406296851574213,
+  "aspect_f1": 0.7929373996789727,
+  "opinion_precision": 0.7405764966740577,
+  "opinion_recall": 0.6733870967741935,
+  "opinion_f1": 0.7053854276663146,
+  "sentiment_accuracy": 0.742914979757085,
+  "triplet_precision": 0.411214953271028,
+  "triplet_recall": 0.2875816993464052,
+  "triplet_f1": 0.3384615384615385,
+  "pair_precision": 0.5700934579439252,
+  "pair_recall": 0.39869281045751637,
+  "pair_f1": 0.46923076923076923
+}
