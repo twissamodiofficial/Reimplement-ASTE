@@ -371,9 +371,9 @@ class StageTwoModel(nn.Module):
     """
     FIXED: Stage Two - Aspect-Opinion Pairing (Paper-Compliant)
     Simplified to match paper's Table 1 methodology exactly
-    FIX #2: Removed dropout (0.5 -> 0.0) for limited training data (~2000 pairs)
+    FIX #2: REVERTED - Keep dropout at 0.5 (removing it made results worse)
     """
-    def __init__(self, embed_dim=300, hidden_size=300, max_distance=100, num_layers=1, dropout=0.0):
+    def __init__(self, embed_dim=300, hidden_size=300, max_distance=100, num_layers=1, dropout=0.5):
         super(StageTwoModel, self).__init__()
         self.embed_dim = embed_dim
         self.hidden_size = hidden_size
@@ -698,7 +698,7 @@ def create_dependency_matrix(sentences, nlp=None):
         List of adjacency matrices
     """
     if nlp is None:
-        nlp = spacy.load("en_core_web_lg")
+        nlp = spacy.load("en_core_web_sm")  # FIX: Revert to small model (baseline used this)
     
     adj_matrices = []
     

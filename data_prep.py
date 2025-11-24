@@ -16,7 +16,7 @@ class SemEvalParser:
     """Parser for SemEval XML format datasets"""
     
     def __init__(self, data_dir="data"):
-        self.nlp = spacy.load("en_core_web_lg")
+        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
         self.data_dir = data_dir
     
     def parse_xml_file(self, xml_path: str) -> List[Dict]:
@@ -248,7 +248,7 @@ class ASTEDataConverter:
     """Convert parsed data to ASTE format"""
     
     def __init__(self):
-        self.nlp = spacy.load("en_core_web_lg")
+        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
         
         # Unified tag mapping (aspect + sentiment)
         self.unified_tags = {

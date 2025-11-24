@@ -163,7 +163,7 @@ class ASTETrainer:
         self.early_stop = False
         
         # PAPER COMPLIANCE: Initialize optimal threshold (will be set after Stage 2 training)
-        self.optimal_threshold = 0.35  # Optimal threshold found through grid search
+        self.optimal_threshold = 0.28  # Lower default to improve recall (was 0.35)
         
         # Checkpointing and resume variables
         self.global_step = 0
@@ -593,11 +593,13 @@ class ASTETrainer:
         loss_tg = criterion(tg_logits, active_tg)  # Now predicting opinion labels
         loss_opinion = criterion(opinion_logits, active_opinion)
 
-        # Paper Equation 9: Equal weights for all losses
+        # ADJUSTED WEIGHTS: Boost opinion and TG losses to improve recall
+        # Paper uses equal weights (1.0 each), but empirically boosting opinion helps
+        # This addresses the low opinion recall (80.1% vs paper 83-86%)
         total_loss = (1.0 * loss_target + 
                         1.0 * loss_unified + 
-                        1.0 * loss_tg +
-                        1.0 * loss_opinion)
+                        1.5 * loss_tg +          # ⬆ Increased to strengthen aspect→opinion guidance
+                        2.0 * loss_opinion)      # ⬆ Increased to emphasize opinion extraction
 
         return total_loss
     
@@ -673,19 +675,14 @@ class ASTETrainer:
         best_f1 = 0.0
         epochs_without_improvement = 0
         
-        # FIX #3: Early stopping at epoch 20 (validation F1 plateaus after epoch 20)
-        max_epochs_before_stopping = 20
+        # REVERTED: Early stopping at 20 made results worse (48.20% vs 52.01%)
+        # Train full 40 epochs - validation metrics will guide optimal checkpoint
         
         for epoch in range(self.num_epochs):
-            # FIX #3: Stop training at epoch 20 to prevent overfitting
-            if epoch >= max_epochs_before_stopping:
-                logger.info(f"⏹️ Early stopping at epoch {epoch} (reached max epochs: {max_epochs_before_stopping})")
-                break
-            
             total_loss = 0.0
             num_batches = 0
             
-            progress_bar = tqdm(stage_two_train_loader, desc=f"Stage 2 Epoch {epoch+1}/{max_epochs_before_stopping}")
+            progress_bar = tqdm(stage_two_train_loader, desc=f"Stage 2 Epoch {epoch+1}/{self.num_epochs}")
             
             for batch_idx, batch in enumerate(progress_bar):
                 self.stage_two_optimizer.zero_grad()
@@ -2121,10 +2118,10 @@ class ASTETrainer:
         best_score = 0
         best_threshold = 0.5
         
-        logger.info("Testing thresholds from 0.3 to 0.7 (optimizing for RECALL)...")
+        logger.info("Testing thresholds from 0.2 to 0.7 (optimizing for RECALL)...")
         threshold_results = []
         
-        for threshold in np.arange(0.3, 0.71, 0.05):
+        for threshold in np.arange(0.20, 0.71, 0.05):
             predicted = [1 if p > threshold else 0 for p in all_probs]
             
             # Calculate metrics
@@ -2155,7 +2152,7 @@ class ASTETrainer:
                 best_score = recall_weighted_score
                 best_threshold = threshold
             
-            if threshold in [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]:
+            if threshold in [0.20, 0.25, 0.30, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]:
                 logger.info(f"  Threshold {threshold:.2f}: P={precision*100:.1f}%, R={recall*100:.1f}%, F1={f1*100:.1f}%, Score={recall_weighted_score*100:.1f}%")
         
         logger.info(f"✅ Optimal threshold: {best_threshold:.2f} (Recall-Weighted Score: {best_score*100:.1f}%)")
@@ -2881,7 +2878,7 @@ class ASTEDataset(Dataset):
         self.label_to_id = label_to_id
         self.target_to_id = target_to_id
         import spacy
-        self.nlp = spacy.load("en_core_web_lg")
+        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
     
     def create_dependency_matrix(self, tokens):
         """Create dependency adjacency matrix from tokens"""

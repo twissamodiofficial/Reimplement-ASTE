@@ -32,7 +32,7 @@ class ASTEDatasetOfficial(Dataset):
         self.boundary_to_id = {'O': 0, 'B': 1, 'I': 2, 'E': 3, 'S': 4}
         
         # Load spaCy for dependency parsing
-        self.nlp = spacy.load("en_core_web_lg")
+        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
         
         self._load_data(file_path)
     
