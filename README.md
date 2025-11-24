@@ -4,12 +4,12 @@ Re-implementation of **"Knowing What, How and Why: A Near Complete Solution for 
 
 This implementation achieves competitive results on the SemEval datasets through a two-stage approach:
 - **Stage 1**: Multi-task learning for aspect/opinion extraction and sentiment classification
-- **Stage 2**: Aspect-opinion pairing with correct paper-compliant training
+- **Stage 2**: Aspect-opinion pairing with correct baseline training
 
 ## 📊 Results
 
-| Dataset | Aspect F1 | Opinion F1 | Sentiment Acc | Pair F1 | Triplet F1 | Paper Baseline |
-|---------|-----------|------------|---------------|---------|------------|----------------|
+| Dataset | Aspect F1 | Opinion F1 | Sentiment Acc | Pair F1 | Triplet F1 | Baseline |
+|---------|-----------|------------|---------------|---------|------------|----------|
 | 14res   | 0.8388    | 0.8065     | 0.8632        | 0.5323  | **0.4639** | 0.5189         |
 | 14lap   | 0.7929    | 0.7054     | 0.7429        | 0.4692  | **0.3385** | 0.4350         |
 | 15res   | 0.7970    | 0.7742     | 0.7976        | 0.4891  | **0.4130** | 0.4679         |
@@ -17,52 +17,86 @@ This implementation achieves competitive results on the SemEval datasets through
 
 ## 🚀 Quick Start
 
-### 1. Environment Setup
+### Complete Setup (One Command)
 
 ```bash
-# Create conda environment
-conda create -n aste python=3.8
-conda activate aste
+#!/bin/bash
 
-# Install dependencies
+# Create virtual environment and install dependencies
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# Install spaCy large model (REQUIRED)
+# Download spaCy model
 python -m spacy download en_core_web_lg
-```
 
-### 2. Download GloVe Embeddings
-
-**Required**: Download GloVe 840B embeddings (2.2 GB)
-
-```bash
-# Create embeddings directory
+# Download GloVe embeddings (840B version - recommended)
 mkdir -p embeddings
-
-# Download GloVe 840B 300d
 cd embeddings
 wget http://nlp.stanford.edu/data/glove.840B.300d.zip
 unzip glove.840B.300d.zip
+rm glove.840B.300d.zip
 cd ..
+
+# Create output directories
+mkdir -p models/checkpoints models/plots logs
+
+echo "Setup complete! Ready to train."
 ```
 
-**Alternative**: GloVe 6B (smaller, 822 MB)
+**Or step-by-step:**
+
+### 1. Environment Setup
+
 ```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 2. Download Required Models & Embeddings
+
+```bash
+# Download spaCy model (required for dependency parsing)
+python -m spacy download en_core_web_lg
+
+# Download GloVe embeddings
+mkdir -p embeddings
 cd embeddings
-wget http://nlp.stanford.edu/data/glove.6B.zip
-unzip glove.6B.zip
+
+# Option A: Full GloVe 840B (recommended, 2.2 GB)
+wget http://nlp.stanford.edu/data/glove.840B.300d.zip
+unzip glove.840B.300d.zip
+rm glove.840B.300d.zip
+
+# Option B: Smaller GloVe 6B (822 MB) - uncomment if preferred
+# wget http://nlp.stanford.edu/data/glove.6B.zip
+# unzip glove.6B.zip
+# rm glove.6B.zip
+
 cd ..
 ```
 
 The code will automatically use `glove.840B.300d.txt` if available, otherwise falls back to `glove.6B.300d.txt`.
 
-### 3. Data Setup
+### 3. Data Setup and Prepare Data Directories
+
+```bash
+# Create output directories
+mkdir -p models/checkpoints models/plots logs
+```
 
 The SemEval datasets should be in `data/` directory:
 ```bash
 git clone https://github.com/xuuuluuu/SemEval-Triplet-data.git
 ```
 Navigate to the ASTE-Data-V1-AAAI2020 folder and set it up in the following format
+
 ```
 data/
 ├── 14res/
@@ -70,21 +104,40 @@ data/
 │   ├── dev.txt
 │   └── test.txt
 ├── 14lap/
+│   ├── train.txt
+│   ├── dev.txt
+│   └── test.txt
 ├── 15res/
+│   ├── 15rest_train.txt
+│   ├── 15rest_dev.txt
+│   └── 15rest_test.txt
 └── 16res/
+    ├── 16rest_train.txt
+    ├── 16rest_dev.txt
+    └── 16rest_test.txt
 ```
 
 ### 4. Train & Evaluate
 
 ```bash
-# Train on a single dataset
+# Full pipeline: train, evaluate, and generate plots
 ./run_local.sh 14res
 
-# Or run manually
+# Or run individual commands
 python train_aste.py --dataset 14res --batch_size 16 --num_epochs 40
 python evaluate_aste.py --dataset 14res --model_dir models
 python generate_plots_from_results.py --dataset 14res
+
+# Train on other datasets
+./run_local.sh 14lap
+./run_local.sh 15res
+./run_local.sh 16res
 ```
+
+**Expected Results on Local Machine (CPU):**
+- 14res: Triplet F1 ~ 53.2%
+- Training time: ~3-4 minutes per epoch on CPU
+- Both Stage 1 and Stage 2 should complete successfully
 
 ## 📁 Project Structure
 
@@ -225,7 +278,7 @@ python generate_plots_from_results.py --dataset 14res
 
 Generates 5 comprehensive visualizations:
 1. **Component Analysis** - Performance of each component
-2. **Performance Overview** - Training progress & paper comparison
+2. **Performance Overview** - Training progress & baseline comparison
 3. **Stage One Metrics** - Aspect/opinion/sentiment training curves
 4. **Stage Two Metrics** - Pairing performance & threshold optimization
 5. **Training Losses** - Loss curves for both stages
@@ -246,7 +299,7 @@ Outputs saved to `models/plots/{dataset}/`
 ### Stage 2: Aspect-Opinion Pairing
 - **Input**: Aspect and opinion spans from Stage 1 predictions
 - **Architecture**: Span-based pairing classifier
-- **Training**: Uses ground-truth pairs (paper-compliant)
+- **Training**: Uses ground-truth pairs (baseline approach)
 - **Inference**: Pairs Stage 1 predicted spans
 - **Threshold optimization**: Grid search on validation set
 
@@ -334,8 +387,8 @@ python evaluate_aste.py --dataset 14res --model_dir models
 
 ## 🔍 Key Features
 
-### ✅ Paper-Compliant Implementation
-- Stage 2 trains on ground-truth pairs (as per paper)
+### ✅ Baseline Implementation
+- Stage 2 trains on ground-truth pairs (as per baseline approach)
 - Stage 2 inference uses Stage 1 predictions
 - Exact evaluation protocol from original paper
 

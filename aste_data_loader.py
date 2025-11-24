@@ -9,18 +9,14 @@ import spacy
 
 
 class ASTEDatasetOfficial(Dataset):
-    """Dataset for official ASTE format - PAPER COMPLIANT"""
-    
     def __init__(self, file_path: str, word_to_id: dict, max_len: int = 128):
         self.examples = []
         self.word_to_id = word_to_id
         self.max_len = max_len
         
-        # Label mappings for official format
         self.target_to_id = {'O': 0, 'T-POS': 1, 'T-NEG': 2, 'T-NEU': 3, 'TT-POS': 4, 'TT-NEG': 5, 'TT-NEU': 6}
         self.opinion_to_id = {'O': 0, 'S': 1, 'SS': 2, 'SSS': 3, 'SSSS': 4, 'SSSSS': 5, 'SSSSSS': 6}
         
-        # Unified label mapping (Paper's 13-class scheme)
         self.unified_to_id = {
             'O': 0,
             'B-POS': 1, 'I-POS': 2, 'E-POS': 3, 'S-POS': 4,
@@ -28,44 +24,23 @@ class ASTEDatasetOfficial(Dataset):
             'B-NEU': 9, 'I-NEU': 10, 'E-NEU': 11, 'S-NEU': 12
         }
         
-        # Boundary labels (for multi-task learning)
         self.boundary_to_id = {'O': 0, 'B': 1, 'I': 2, 'E': 3, 'S': 4}
         
-        # Load spaCy for dependency parsing
-        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
+        self.nlp = spacy.load("en_core_web_lg")
         
         self._load_data(file_path)
     
     def _load_ground_truth_triplets(self, file_path: str):
-        """
-        Load ground truth triplets from AAAI 2020 V1 pickle files
-        
-        The AAAI 2020 paper uses pickle files to store authoritative triplet annotations
-        because the T-/TT- tag format has known ambiguities (as noted in README).
-        
-        Directory structure:
-        - data/14res/train.txt -> data/14res/14rest_pair/train_pair.pkl
-        - data/14lap/train.txt -> data/14lap/14lap_pair/train_pair.pkl
-        - etc.
-        
-        Returns:
-            List of triplets for each sentence, or None if pickle file not found
-            Format per sentence: [([target_indices], [opinion_indices], sentiment_id), ...]
-            - sentiment_id: 0=NEU, 1=POS, 2=NEG (AAAI 2020 encoding)
-        """
-        # Determine pickle file path based on data file path
         base_dir = os.path.dirname(file_path)
         file_name = os.path.basename(file_path)
         
-        # Extract dataset name and split (train/test/dev)
-        dataset_name = os.path.basename(base_dir)  # e.g., "14res", "14lap"
-        split_name = file_name.replace('.txt', '')  # e.g., "train", "test", "dev"
+        dataset_name = os.path.basename(base_dir)
+        split_name = file_name.replace('.txt', '')
         
-        # AAAI 2020 V1 naming conventions for pair directories
         pair_dirs = [
-            os.path.join(base_dir, f"{dataset_name.replace('res', 'rest')}_pair"),  # 14rest_pair for 14res
-            os.path.join(base_dir, f"{dataset_name}_pair"),  # 14lap_pair for 14lap
-            os.path.join(base_dir, "pair"),  # Generic fallback
+            os.path.join(base_dir, f"{dataset_name.replace('res', 'rest')}_pair"),
+            os.path.join(base_dir, f"{dataset_name}_pair"),
+            os.path.join(base_dir, "pair"),
         ]
         
         for pair_dir in pair_dirs:
@@ -76,21 +51,19 @@ class ASTEDatasetOfficial(Dataset):
                         triplets = pickle.load(f)
                     return triplets
                 except Exception as e:
-                    print(f"⚠️  Error loading pickle file {pickle_path}: {e}")
+                    print(f"Error loading pickle file {pickle_path}: {e}")
                     return None
         
         return None
     
     def _load_data(self, file_path: str):
-        """Load data from ASTE format file"""
         print(f"Loading data from {file_path}")
         
-        # Try to load ground truth triplets from pickle file
         gt_triplets = self._load_ground_truth_triplets(file_path)
         if gt_triplets:
-            print(f"✅ Loaded ground truth triplets from pickle file ({len(gt_triplets)} sentences)")
+            print(f"Loaded ground truth triplets from pickle file ({len(gt_triplets)} sentences)")
         else:
-            print("⚠️  No pickle file found - will infer triplets from tags (may have mismatches)")
+            print("No pickle file found - will infer triplets from tags (may have mismatches)")
         
         with open(file_path, 'r', encoding='utf-8') as f:
             for line_idx, line in enumerate(f):
@@ -113,19 +86,14 @@ class ASTEDatasetOfficial(Dataset):
                 if len(tokens) > self.max_len or len(tokens) == 0:
                     continue
                 
-                # Create dependency matrix
                 dep_matrix = self._create_dependency_matrix(tokens)
                 
-                # Convert to boundary labels for multi-task learning
                 target_boundary_labels = self._convert_to_boundary_labels_FIXED(target_labels, 'target')
                 opinion_boundary_labels = self._convert_to_boundary_labels_FIXED(opinion_labels, 'opinion')
                 
-                # Extract triplets - use pickle ground truth if available, else infer from tags
                 if gt_triplets and line_idx < len(gt_triplets):
-                    # Convert from pickle format to our internal format
                     triplets = self._convert_pickle_triplets(gt_triplets[line_idx], tokens)
                 else:
-                    # Fallback: infer from tags (may have mismatches)
                     triplets = self._extract_triplets_FIXED(target_labels, opinion_labels, tokens)
                 
                 example = {
@@ -146,7 +114,6 @@ class ASTEDatasetOfficial(Dataset):
         print(f"Loaded {len(self.examples)} examples from {file_path}")
     
     def _parse_labels(self, sentence: str, target_part: str, opinion_part: str):
-        """Parse tokens and labels from the format"""
         target_items = target_part.split()
         tokens = []
         target_labels = []
@@ -168,10 +135,6 @@ class ASTEDatasetOfficial(Dataset):
         return tokens, target_labels, opinion_labels
     
     def _convert_to_boundary_labels_FIXED(self, labels: List[str], label_type: str) -> List[str]:
-        """
-        FIXED: Convert ASTE labels to BIES boundary labels
-        Paper-compliant handling of multi-token spans
-        """
         boundary_labels = ['O'] * len(labels)
         
         if label_type == 'target':
@@ -180,18 +143,15 @@ class ASTEDatasetOfficial(Dataset):
                 label = labels[i]
                 
                 if label.startswith('T-') and not label.startswith('TT'):
-                    # Start of target span
                     span_start = i
                     span_length = 1
                     sentiment = label.split('-')[1] if '-' in label else 'NEU'
                     
-                    # Count continuation tokens (TT-XXX)
                     j = i + 1
                     while j < len(labels) and labels[j].startswith('TT'):
                         span_length += 1
                         j += 1
                     
-                    # Assign BIES tags
                     if span_length == 1:
                         boundary_labels[i] = 'S'
                     else:
@@ -211,17 +171,14 @@ class ASTEDatasetOfficial(Dataset):
                 label = labels[i]
                 
                 if label == 'S':
-                    # Start of opinion span
                     span_start = i
                     span_length = 1
                     
-                    # Count continuation (SS, SSS, etc.)
                     j = i + 1
                     while j < len(labels) and len(labels[j]) > 0 and all(c == 'S' for c in labels[j]):
                         span_length += 1
                         j += 1
                     
-                    # Assign BIES tags
                     if span_length == 1:
                         boundary_labels[i] = 'S'
                     else:
@@ -238,10 +195,8 @@ class ASTEDatasetOfficial(Dataset):
         return boundary_labels
     
     def _convert_to_unified_bio_labels(self, target_labels: List[str]) -> List[int]:
-        """Convert target labels to paper's unified BIO format with sentiment"""
         unified_labels = []
         
-        # Identify aspect spans
         spans = []
         current_span = None
         
@@ -261,7 +216,6 @@ class ASTEDatasetOfficial(Dataset):
         if current_span is not None:
             spans.append(current_span)
         
-        # Assign BIO labels
         for i in range(len(target_labels)):
             in_span = None
             for span in spans:
@@ -287,24 +241,6 @@ class ASTEDatasetOfficial(Dataset):
         return unified_labels
     
     def _convert_pickle_triplets(self, pickle_triplets: List, tokens: List[str]) -> List[Tuple[int, int, int, int, str]]:
-        """
-        Convert AAAI 2020 pickle format triplets to internal format
-        
-        AAAI 2020 V1 Pickle format: [([target_indices], [opinion_indices], sentiment_id), ...]
-        - target_indices: List of token positions for aspect (e.g., [2] or [11])
-        - opinion_indices: List of token positions for opinion (e.g., [5] or [15, 16])
-        - sentiment_id: Integer encoding: 0=NEU, 1=POS, 2=NEG
-        
-        Internal format: [(target_start, target_end, opinion_start, opinion_end, sentiment_str), ...]
-        - All indices are token positions (0-indexed)
-        - sentiment_str: lowercase string ('neu', 'pos', 'neg')
-        
-        NOTE: This mapping is consistent with codebase usage:
-        - Stage One extracts aspects with sentiment from T-POS/T-NEG/T-NEU tags
-        - Stage Two uses triplets for pairing validation (sentiment preserved)
-        - Evaluation compares using lowercase sentiment strings
-        """
-        # AAAI 2020 V1 sentiment encoding (verified from pickle files)
         sentiment_map = {0: 'neu', 1: 'pos', 2: 'neg'}
         triplets = []
         
@@ -312,13 +248,11 @@ class ASTEDatasetOfficial(Dataset):
             if not target_indices or not opinion_indices:
                 continue
             
-            # Convert index lists to span boundaries (inclusive start, inclusive end)
             target_start = min(target_indices)
             target_end = max(target_indices)
             opinion_start = min(opinion_indices)
             opinion_end = max(opinion_indices)
             
-            # Map sentiment ID to lowercase string (matches codebase convention)
             sentiment = sentiment_map.get(sentiment_id, 'neu')
             
             triplets.append((target_start, target_end, opinion_start, opinion_end, sentiment))
@@ -327,35 +261,15 @@ class ASTEDatasetOfficial(Dataset):
     
     def _extract_triplets_FIXED(self, target_labels: List[str], opinion_labels: List[str], 
                             tokens: List[str]) -> List[Tuple[int, int, int, int, str]]:
-        """
-        PAPER COMPLIANT: Extract triplets from official ASTE format
-        
-        Paper Evidence (Section 2.1): "The example consists of two target and opinion pairs, 
-        the first pair is 'price' and 'best', the second pair is 'feature' and 'newer'. 
-        Note that 'TT-POS' is only used for indicating the pairing relation with 'SS'"
-        
-        Official Format Rules:
-        1. T-XXX marks START of aspect with sentiment XXX
-        2. TT-XXX marks CONTINUATION tokens of multi-word aspects
-        3. S marks START of opinion
-        4. SS, SSS, etc. mark CONTINUATION tokens of multi-word opinions
-        5. POSITIONAL CORRESPONDENCE: 1st T- pairs with 1st S, 2nd T-/TT- pairs with 2nd S/SS
-        
-        Returns:
-            List of (aspect_start, aspect_end, opinion_start, opinion_end, sentiment)
-        """
-        # Extract target spans with sentiments
         target_spans = []
         i = 0
         while i < len(target_labels):
             label = target_labels[i]
             
             if label.startswith('T-') and not label.startswith('TT'):
-                # NEW aspect starts here
                 start = i
                 sentiment = label.split('-')[1] if '-' in label else 'NEU'
                 
-                # Find continuation tokens (TT- with same sentiment)
                 end = start
                 j = i + 1
                 while j < len(target_labels) and target_labels[j].startswith('TT'):
@@ -374,18 +288,15 @@ class ASTEDatasetOfficial(Dataset):
             else:
                 i += 1
         
-        # Extract opinion spans
         opinion_spans = []
         i = 0
         while i < len(opinion_labels):
             label = opinion_labels[i]
             
             if label == 'S':
-                # NEW opinion starts here
                 start = i
                 end = start
                 
-                # Find continuation tokens (SS, SSS, etc.)
                 j = i + 1
                 while j < len(opinion_labels):
                     if len(opinion_labels[j]) > 0 and all(c == 'S' for c in opinion_labels[j]):
@@ -399,34 +310,27 @@ class ASTEDatasetOfficial(Dataset):
             else:
                 i += 1
         
-        # PAPER COMPLIANT: Positional correspondence pairing
         triplets = []
         
         if len(target_spans) != len(opinion_spans):
-            # Mismatch in AAAI V1 format - use min count pairing
-            # (This is only used as fallback when pickle files unavailable)
             min_count = min(len(target_spans), len(opinion_spans))
             target_spans = target_spans[:min_count]
             opinion_spans = opinion_spans[:min_count]
         
-        # PAPER METHOD: Position-based pairing (1st with 1st, 2nd with 2nd, ...)
         for (t_start, t_end, sentiment), (o_start, o_end) in zip(target_spans, opinion_spans):
             triplets.append((t_start, t_end, o_start, o_end, sentiment))
         
         return triplets
     
     def _create_dependency_matrix(self, tokens: List[str]) -> np.ndarray:
-        """Create dependency adjacency matrix"""
         sentence = " ".join(tokens)
         doc = self.nlp(sentence)
         
         seq_len = len(tokens)
         dep_matrix = np.eye(seq_len, dtype=np.float32)
         
-        # Simple alignment
         token_mapping = {i: i for i in range(min(len(tokens), len(doc)))}
         
-        # Add dependency edges
         for i, token in enumerate(doc):
             if i < seq_len and token.head.i < seq_len and i != token.head.i:
                 dep_matrix[i, token.head.i] = 1.0
@@ -456,13 +360,6 @@ class ASTEDatasetOfficial(Dataset):
 
 
 def collate_fn_official(batch):
-    """
-    Collate function for official ASTE dataset
-    
-    Paper uses max_len=128 (no arbitrary filtering)
-    Previously had <= 50 filter which caused data loss (4 examples in 14res train)
-    """
-    # Remove the arbitrary 50-token filter - use all examples from batch
     filtered_batch = batch
     
     if not filtered_batch:
@@ -518,7 +415,6 @@ def collate_fn_official(batch):
 
 
 def build_vocab_from_aste(data_dirs: List[str], min_freq: int = 1) -> Dict[str, int]:
-    """Build vocabulary from ASTE dataset files"""
     word_freq = {}
     
     for data_dir in data_dirs:

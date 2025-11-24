@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Generate plots from evaluation results and training metrics
-Uses actual final metrics from evaluation_results.json
-"""
 
 import os
 import json
@@ -10,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 def load_results(dataset_name, model_dir='./models'):
-    """Load evaluation results and training metrics"""
     eval_file = os.path.join(model_dir, f'{dataset_name}_evaluation_results.json')
     training_file = os.path.join(model_dir, f'{dataset_name}_training_metrics.json')
     
@@ -23,17 +18,15 @@ def load_results(dataset_name, model_dir='./models'):
     return eval_results, training_metrics
 
 def plot_component_analysis(eval_results, training_metrics, dataset_name, output_dir):
-    """Plot component performance analysis using actual results"""
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
-    
-    # Component comparison (using ACTUAL evaluation results)
+
     components = ['Aspect\nExtraction', 'Opinion\nExtraction', 'Sentiment\nClassification', 'Aspect-Opinion\nPairing']
     
     final_values = [
         eval_results['aspect_f1'],
         eval_results['opinion_f1'],
         eval_results['sentiment_accuracy'],
-        eval_results['pair_f1']  # Using actual pair_f1 from evaluation
+        eval_results['pair_f1']
     ]
     
     bars = ax1.bar(components, final_values, 
@@ -43,13 +36,11 @@ def plot_component_analysis(eval_results, training_metrics, dataset_name, output
     ax1.set_ylim(0, 1)
     ax1.grid(True, alpha=0.3, axis='y')
     
-    # Add value labels
     for bar in bars:
         height = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                 f'{height:.3f}', ha='center', va='bottom', fontweight='bold')
-    
-    # Stage 1 component evolution (from training)
+
     stage1_metrics = training_metrics['stage_one']
     stage1_epochs = [i*10 for i in range(1, len(stage1_metrics['aspect_f1']) + 1)]
     
@@ -68,7 +59,6 @@ def plot_component_analysis(eval_results, training_metrics, dataset_name, output
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 1)
     
-    # Model architecture summary
     ax3.text(0.1, 0.9, 'ASTE Model Architecture', fontsize=16, fontweight='bold', transform=ax3.transAxes)
     ax3.text(0.1, 0.8, f'• Stage 1: Multi-task Learning', fontsize=12, transform=ax3.transAxes)
     ax3.text(0.1, 0.7, f'• Stage 2: Aspect-Opinion Pairing', fontsize=12, transform=ax3.transAxes)
@@ -81,14 +71,12 @@ def plot_component_analysis(eval_results, training_metrics, dataset_name, output
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'{dataset_name}_component_analysis.png'), dpi=300, bbox_inches='tight')
-    print(f"✅ Saved component analysis to {output_dir}")
+    print(f"Saved component analysis to {output_dir}")
     plt.close()
 
 def plot_performance_overview(eval_results, training_metrics, dataset_name, output_dir):
-    """Plot performance overview using actual results"""
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
     
-    # Stage 1: Training loss
     stage1_metrics = training_metrics['stage_one']
     epochs = list(range(1, len(stage1_metrics['train_loss']) + 1))
     
@@ -108,7 +96,6 @@ def plot_performance_overview(eval_results, training_metrics, dataset_name, outp
     ax2.set_ylabel('Loss')
     ax2.grid(True, alpha=0.3)
     
-    # Final performance metrics comparison
     metrics_names = ['Aspect\nF1', 'Opinion\nF1', 'Sentiment\nAcc', 'Pair\nF1', 'Triplet\nF1']
     metrics_values = [
         eval_results['aspect_f1'],
@@ -125,13 +112,11 @@ def plot_performance_overview(eval_results, training_metrics, dataset_name, outp
     ax3.set_ylim(0, 1)
     ax3.grid(True, alpha=0.3, axis='y')
     
-    # Add value labels
     for bar in bars:
         height = bar.get_height()
         ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                 f'{height:.3f}', ha='center', va='bottom', fontweight='bold', fontsize=10)
     
-    # Paper comparison
     paper_results = {'14res': 0.5189, '14lap': 0.435, '15res': 0.4679, '16res': 0.5362}
     datasets = ['14res', '14lap', '15res', '16res']
     our_result = eval_results['triplet_f1']
@@ -153,7 +138,6 @@ def plot_performance_overview(eval_results, training_metrics, dataset_name, outp
     ax4.grid(True, alpha=0.3, axis='y')
     ax4.set_ylim(0, 0.6)
     
-    # Add value labels
     for i, d in enumerate(datasets):
         paper_val = paper_results[d]
         ax4.text(i - width/2, paper_val + 0.01, f'{paper_val:.3f}', 
@@ -164,16 +148,14 @@ def plot_performance_overview(eval_results, training_metrics, dataset_name, outp
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'{dataset_name}_performance_overview.png'), dpi=300, bbox_inches='tight')
-    print(f"✅ Saved performance overview to {output_dir}")
+    print(f"Saved performance overview to {output_dir}")
     plt.close()
 
 def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_dir):
-    """Plot Stage 2 metrics using validation data and final results"""
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
     stage2_metrics = training_metrics['stage_two']
     
-    # Validation F1 during training
     eval_epochs = [i for i in range(1, len(stage2_metrics['val_f1']) + 1)]
     
     if eval_epochs:
@@ -186,7 +168,6 @@ def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_
         ax1.grid(True, alpha=0.3)
         ax1.set_ylim(0, 1)
         
-        # Precision and Recall
         ax2.plot(eval_epochs, stage2_metrics['val_precision'], 'darkblue', linewidth=2, marker='s', markersize=5, label='Precision')
         ax2.plot(eval_epochs, stage2_metrics['val_recall'], 'darkred', linewidth=2, marker='^', markersize=5, label='Recall')
         ax2.axhline(y=eval_results['pair_precision'], color='blue', linestyle='--', linewidth=1.5, alpha=0.7, label='Test Precision')
@@ -198,7 +179,6 @@ def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_
         ax2.grid(True, alpha=0.3)
         ax2.set_ylim(0, 1)
     
-    # Final test metrics breakdown
     final_metrics = {
         'Triplet\nPrecision': eval_results['triplet_precision'],
         'Triplet\nRecall': eval_results['triplet_recall'],
@@ -215,7 +195,6 @@ def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_
     ax3.set_ylim(0, 1)
     ax3.grid(True, alpha=0.3, axis='y')
     
-    # Add value labels
     for bar in bars:
         height = bar.get_height()
         ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
@@ -223,7 +202,6 @@ def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_
     
     plt.xticks(rotation=20)
     
-    # Threshold search results
     threshold_data = stage2_metrics.get('threshold_search', [])
     if threshold_data:
         thresholds = [item['threshold'] for item in threshold_data]
@@ -247,25 +225,22 @@ def plot_stage_two_metrics(eval_results, training_metrics, dataset_name, output_
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'{dataset_name}_stage_two_metrics.png'), dpi=300, bbox_inches='tight')
-    print(f"✅ Saved stage two metrics to {output_dir}")
+    print(f"Saved stage two metrics to {output_dir}")
     plt.close()
 
 def plot_stage_one_metrics(training_metrics, dataset_name, output_dir):
-    """Plot Stage 1 training metrics"""
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
     stage1_metrics = training_metrics['stage_one']
     epochs = list(range(1, len(stage1_metrics['train_loss']) + 1))
     eval_epochs = [i*10 for i in range(1, len(stage1_metrics['aspect_f1']) + 1)]
     
-    # Training loss
     ax1.plot(epochs, stage1_metrics['train_loss'], 'darkblue', linewidth=2, marker='o', markersize=3)
     ax1.set_title('Stage 1: Training Loss', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Loss')
     ax1.grid(True, alpha=0.3)
     
-    # Component F1 scores
     ax2.plot(eval_epochs, stage1_metrics['aspect_f1'], 'purple', linewidth=2, marker='o', label='Aspect F1', markersize=5)
     ax2.plot(eval_epochs, stage1_metrics['opinion_f1'], 'orange', linewidth=2, marker='s', label='Opinion F1', markersize=5)
     ax2.plot(eval_epochs, stage1_metrics['sentiment_acc'], 'teal', linewidth=2, marker='^', label='Sentiment Acc', markersize=5)
@@ -276,7 +251,6 @@ def plot_stage_one_metrics(training_metrics, dataset_name, output_dir):
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 1)
     
-    # Token-level metrics
     ax3.plot(eval_epochs, stage1_metrics['val_f1'], 'darkgreen', linewidth=2, marker='D', label='Token F1', markersize=5)
     ax3.plot(eval_epochs, stage1_metrics['val_precision'], 'darkblue', linewidth=2, marker='s', label='Token Precision', markersize=4)
     ax3.plot(eval_epochs, stage1_metrics['val_recall'], 'darkred', linewidth=2, marker='^', label='Token Recall', markersize=4)
@@ -287,7 +261,6 @@ def plot_stage_one_metrics(training_metrics, dataset_name, output_dir):
     ax3.grid(True, alpha=0.3)
     ax3.set_ylim(0, 1)
     
-    # Final component scores
     final_scores = {
         'Aspect F1': stage1_metrics['aspect_f1'][-1],
         'Opinion F1': stage1_metrics['opinion_f1'][-1],
@@ -301,7 +274,6 @@ def plot_stage_one_metrics(training_metrics, dataset_name, output_dir):
     ax4.set_ylim(0, 1)
     ax4.grid(True, alpha=0.3, axis='y')
     
-    # Add value labels
     for bar in bars:
         height = bar.get_height()
         ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
@@ -309,11 +281,10 @@ def plot_stage_one_metrics(training_metrics, dataset_name, output_dir):
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'{dataset_name}_stage_one_metrics.png'), dpi=300, bbox_inches='tight')
-    print(f"✅ Saved stage one metrics to {output_dir}")
+    print(f"Saved stage one metrics to {output_dir}")
     plt.close()
 
 def plot_training_losses(training_metrics, dataset_name, output_dir):
-    """Plot combined training losses"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
     
     stage1_metrics = training_metrics['stage_one']
@@ -322,14 +293,12 @@ def plot_training_losses(training_metrics, dataset_name, output_dir):
     epochs1 = list(range(1, len(stage1_metrics['train_loss']) + 1))
     epochs2 = list(range(1, len(stage2_metrics['train_loss']) + 1))
     
-    # Stage 1 loss
     ax1.plot(epochs1, stage1_metrics['train_loss'], 'darkblue', linewidth=2, marker='o', markersize=3)
     ax1.set_title('Stage 1: Training Loss', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Loss')
     ax1.grid(True, alpha=0.3)
     
-    # Stage 2 loss
     ax2.plot(epochs2, stage2_metrics['train_loss'], 'darkred', linewidth=2, marker='s', markersize=4)
     ax2.set_title('Stage 2: Training Loss', fontsize=14, fontweight='bold')
     ax2.set_xlabel('Epoch')
@@ -338,33 +307,30 @@ def plot_training_losses(training_metrics, dataset_name, output_dir):
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'{dataset_name}_training_losses.png'), dpi=300, bbox_inches='tight')
-    print(f"✅ Saved training losses to {output_dir}")
+    print(f"Saved training losses to {output_dir}")
     plt.close()
 
 def main():
-    """Generate all plots for a dataset"""
     import argparse
     
     parser = argparse.ArgumentParser(description='Generate plots from evaluation results')
-    parser.add_argument('--dataset', type=str, default='14res', help='Dataset name (14res, 14lap, 15res, 16res)')
-    parser.add_argument('--model_dir', type=str, default='./models', help='Directory containing results')
-    parser.add_argument('--output_dir', type=str, default=None, help='Output directory for plots')
+    parser.add_argument('--dataset', type=str, default='14res')
+    parser.add_argument('--model_dir', type=str, default='./models')
+    parser.add_argument('--output_dir', type=str, default=None)
     args = parser.parse_args()
     
-    # Set output directory (use plots/{dataset} structure to match original)
     if args.output_dir is None:
         args.output_dir = os.path.join(args.model_dir, 'plots', args.dataset)
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print(f"\n{'='*60}")
+    print("="*60)
     print(f"Generating plots for dataset: {args.dataset}")
-    print(f"{'='*60}\n")
+    print("="*60)
     
-    # Load results
     eval_results, training_metrics = load_results(args.dataset, args.model_dir)
     
-    print(f"📊 Evaluation Results:")
+    print(f"\nEvaluation Results:")
     print(f"   - Aspect F1: {eval_results['aspect_f1']:.4f}")
     print(f"   - Opinion F1: {eval_results['opinion_f1']:.4f}")
     print(f"   - Sentiment Acc: {eval_results['sentiment_accuracy']:.4f}")
@@ -372,16 +338,15 @@ def main():
     print(f"   - Triplet F1: {eval_results['triplet_f1']:.4f}")
     print()
     
-    # Generate plots
     plot_component_analysis(eval_results, training_metrics, args.dataset, args.output_dir)
     plot_performance_overview(eval_results, training_metrics, args.dataset, args.output_dir)
     plot_stage_one_metrics(training_metrics, args.dataset, args.output_dir)
     plot_stage_two_metrics(eval_results, training_metrics, args.dataset, args.output_dir)
     plot_training_losses(training_metrics, args.dataset, args.output_dir)
     
-    print(f"\n{'='*60}")
-    print(f"✅ All plots saved to: {args.output_dir}")
-    print(f"{'='*60}\n")
+    print("="*60)
+    print(f"All plots saved to: {args.output_dir}")
+    print("="*60)
 
 if __name__ == '__main__':
     main()

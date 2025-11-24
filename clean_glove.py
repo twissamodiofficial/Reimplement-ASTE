@@ -17,11 +17,9 @@ with open(input_file, 'r', encoding='utf-8', errors='ignore') as fin:
                     skipped_lines += 1
                     continue
                 
-                # Verify all values are floats
                 word = parts[0]
                 vector = [float(x) for x in parts[1:]]
                 
-                # Write valid line
                 fout.write(line)
                 valid_lines += 1
                 
@@ -32,7 +30,7 @@ with open(input_file, 'r', encoding='utf-8', errors='ignore') as fin:
                 skipped_lines += 1
                 continue
 
-print(f"\nDone! Valid lines: {valid_lines}, Skipped: {skipped_lines}")
+print(f"\n Valid lines: {valid_lines}, Skipped: {skipped_lines}")
 print(f"Cleaned file saved to: {output_file}")
 print(f"\nTo use the cleaned file, run:")
 print(f"  mv {output_file} {input_file}")

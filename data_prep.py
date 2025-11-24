@@ -1,8 +1,3 @@
-"""
-Data preparation module for ASTE (Aspect Sentiment Triplet Extraction)
-Handles SemEval dataset parsing, opinion extraction, and conversion to ASTE format
-"""
-
 import os
 import re
 import json
@@ -13,21 +8,12 @@ import spacy
 
 
 class SemEvalParser:
-    """Parser for SemEval XML format datasets"""
     
     def __init__(self, data_dir="data"):
-        self.nlp = spacy.load("en_core_web_lg")  # Upgraded to lg for better dependency parsing
+        self.nlp = spacy.load("en_core_web_lg")
         self.data_dir = data_dir
     
     def parse_xml_file(self, xml_path: str) -> List[Dict]:
-        """
-        Parse SemEval XML file and extract sentences with aspect terms
-        
-        Args:
-            xml_path: Path to XML file
-        Returns:
-            List of sentence dictionaries
-        """
         tree = ET.parse(xml_path)
         root = tree.getroot()
         
@@ -59,32 +45,19 @@ class SemEvalParser:
         return sentences
     
     def extract_opinions_heuristic(self, text: str, aspects: List[Dict]) -> List[Dict]:
-        """
-        Extract opinion terms using syntactic dependency-based approach (Paper methodology)
-        
-        Args:
-            text: Sentence text
-            aspects: List of aspect dictionaries
-        Returns:
-            List of opinion dictionaries with dependency-based extraction
-        """
         doc = self.nlp(text)
         opinions = []
         
-        # Get aspect positions and tokens for context
         aspect_spans = [(a['from'], a['to']) for a in aspects]
         aspect_tokens = set()
         
-        # Find aspect tokens in the parsed document
         for aspect in aspects:
             aspect_start, aspect_end = aspect['from'], aspect['to']
             for token in doc:
                 if token.idx >= aspect_start and token.idx < aspect_end:
                     aspect_tokens.add(token)
         
-        # Extract opinions based on dependency relations (following paper)
         for token in doc:
-            # Check if token is not part of an aspect
             token_start = token.idx
             token_end = token.idx + len(token.text)
             
@@ -96,29 +69,24 @@ class SemEvalParser:
             if is_aspect:
                 continue
             
-            # Paper-based opinion extraction criteria:
             is_opinion = False
             confidence = 0.0
             
-            # 1. Direct opinion words (adjectives, adverbs with sentiment)
             if (token.pos_ in ['ADJ', 'ADV'] and 
                 not token.is_stop and len(token.text) > 2):
                 is_opinion = True
                 confidence = 0.8
             
-            # 2. Opinion verbs (sentiment-bearing verbs)
             elif (token.pos_ == 'VERB' and token.lemma_ in 
                   ['love', 'hate', 'like', 'dislike', 'enjoy', 'prefer', 'recommend', 
                    'praise', 'criticize', 'appreciate', 'disapprove', 'admire']):
                 is_opinion = True
                 confidence = 0.7
             
-            # 3. Dependency-based extraction (key paper contribution)
             elif self._has_opinion_dependency(token, aspect_tokens, doc):
                 is_opinion = True
-                confidence = 0.9  # High confidence for syntactic relations
+                confidence = 0.9
             
-            # 4. Sentiment-bearing nouns in specific contexts
             elif (token.pos_ == 'NOUN' and token.lemma_ in 
                   ['quality', 'problem', 'issue', 'advantage', 'benefit', 'drawback',
                    'strength', 'weakness', 'excellence', 'perfection', 'disaster']):
@@ -136,44 +104,33 @@ class SemEvalParser:
                     'head': token.head.text if token.head != token else None
                 })
         
-        # Filter opinions by confidence and remove duplicates
         opinions = [op for op in opinions if op['confidence'] >= 0.5]
         opinions = self._remove_overlapping_opinions(opinions)
         
         return opinions
     
     def _has_opinion_dependency(self, token, aspect_tokens, doc) -> bool:
-        """
-        Check if token has opinion-indicating dependency relations with aspects
-        Following paper's syntactic dependency analysis
-        """
-        # Key dependency relations that indicate opinion (from paper)
         opinion_deps = {
-            'amod',      # adjectival modifier: "good food"
-            'advmod',    # adverbial modifier: "very good" 
-            'nsubj',     # nominal subject: "food is good"
-            'acomp',     # adjectival complement: "food tastes good"
-            'xcomp',     # open clausal complement
-            'ccomp',     # clausal complement
-            'dobj',      # direct object in opinion context
+            'amod',
+            'advmod',
+            'nsubj',
+            'acomp',
+            'xcomp',
+            'ccomp',
+            'dobj',
         }
         
-        # Check direct dependency with aspect tokens
         for aspect_token in aspect_tokens:
-            # Token modifies aspect
             if (token.head == aspect_token and token.dep_ in opinion_deps):
                 return True
                 
-            # Aspect modifies token (reverse relation)
             if (aspect_token.head == token and aspect_token.dep_ in opinion_deps):
                 return True
                 
-            # Shared dependency head (coordination)
             if (token.head == aspect_token.head and 
                 token.dep_ in opinion_deps and aspect_token.dep_ in opinion_deps):
                 return True
         
-        # Check for copular constructions: "food is delicious"
         if token.dep_ == 'attr' and token.head.lemma_ == 'be':
             for child in token.head.children:
                 if child in aspect_tokens:
@@ -182,7 +139,6 @@ class SemEvalParser:
         return False
     
     def _remove_overlapping_opinions(self, opinions: List[Dict]) -> List[Dict]:
-        """Remove overlapping opinion spans, keeping the highest confidence"""
         opinions = sorted(opinions, key=lambda x: x['confidence'], reverse=True)
         filtered = []
         
@@ -198,13 +154,11 @@ class SemEvalParser:
         return filtered
     
     def get_train_examples(self):
-        """Load training examples from improved JSON file"""
         train_file = os.path.join(self.data_dir, 'train_improved.json')
         if os.path.exists(train_file):
             with open(train_file, 'r') as f:
                 return json.load(f)
         else:
-            # Fallback to original file
             train_file = os.path.join(self.data_dir, 'train.json')
             if os.path.exists(train_file):
                 with open(train_file, 'r') as f:
@@ -213,13 +167,11 @@ class SemEvalParser:
                 raise FileNotFoundError(f"Training file not found: {train_file}")
     
     def get_test_examples(self):
-        """Load test examples from improved JSON file"""
         test_file = os.path.join(self.data_dir, 'test_improved.json')
         if os.path.exists(test_file):
             with open(test_file, 'r') as f:
                 return json.load(f)
         else:
-            # Fallback to original file
             test_file = os.path.join(self.data_dir, 'test.json')
             if os.path.exists(test_file):
                 with open(test_file, 'r') as f:
@@ -228,7 +180,6 @@ class SemEvalParser:
                 raise FileNotFoundError(f"Test file not found: {test_file}")
     
     def build_vocab(self, examples):
-        """Build vocabulary from examples"""
         vocab = {'<PAD>': 0, '<UNK>': 1}
         vocab_idx = 2
         
@@ -238,19 +189,16 @@ class SemEvalParser:
                     vocab[token.lower()] = vocab_idx
                     vocab_idx += 1
         
-        # Create reverse mapping
         id_to_word = {v: k for k, v in vocab.items()}
         
         return vocab, id_to_word
 
 
 class ASTEDataConverter:
-    """Convert parsed data to ASTE format"""
     
     def __init__(self):
-        self.nlp = spacy.load("en_core_web_sm")  # Reverted from lg to sm (baseline config)
+        self.nlp = spacy.load("en_core_web_lg")
         
-        # Unified tag mapping (aspect + sentiment)
         self.unified_tags = {
             'B-POS': 0, 'I-POS': 1, 'E-POS': 2, 'S-POS': 3,
             'B-NEG': 4, 'I-NEG': 5, 'E-NEG': 6, 'S-NEG': 7, 
@@ -258,34 +206,22 @@ class ASTEDataConverter:
             'O': 12
         }
         
-        # Target boundary tags
         self.target_tags = {
             'B': 0, 'I': 1, 'E': 2, 'S': 3, 'O': 4
         }
         
-        # Opinion tags
         self.opinion_tags = {
             'B': 0, 'I': 1, 'E': 2, 'S': 3, 'O': 4
         }
         
-        # Sentiment mapping
         self.sentiment_map = {
             'positive': 'POS',
             'negative': 'NEG', 
             'neutral': 'NEU',
-            'conflict': 'NEU'  # Treat conflict as neutral
+            'conflict': 'NEU'
         }
     
     def tokenize_sentence(self, text: str) -> Tuple[List[str], List[int]]:
-        """
-        Tokenize sentence and get character offsets
-        
-        Args:
-            text: Input text
-        Returns:
-            tokens: List of tokens
-            offsets: List of (start, end) character offsets
-        """
         doc = self.nlp(text)
         tokens = []
         offsets = []
@@ -298,31 +234,18 @@ class ASTEDataConverter:
     
     def align_spans_to_tokens(self, span_start: int, span_end: int, 
                               offsets: List[Tuple[int, int]]) -> Tuple[int, int]:
-        """
-        Align character spans to token indices
-        
-        Args:
-            span_start: Character start position
-            span_end: Character end position  
-            offsets: Token character offsets
-        Returns:
-            Token start and end indices
-        """
         token_start = -1
         token_end = -1
         
         for i, (offset_start, offset_end) in enumerate(offsets):
-            # Find token that starts the span
             if token_start == -1 and offset_start >= span_start:
                 token_start = i
             
-            # Find token that ends the span
             if offset_end <= span_end:
                 token_end = i
             elif token_start != -1:
                 break
         
-        # Handle edge cases
         if token_start == -1:
             token_start = 0
         if token_end == -1 or token_end < token_start:
@@ -332,16 +255,6 @@ class ASTEDataConverter:
     
     def create_bio_tags(self, tokens: List[str], spans: List[Tuple[int, int, str]], 
                         tag_type: str) -> List[str]:
-        """
-        Create BIO tags for token sequence
-        
-        Args:
-            tokens: List of tokens
-            spans: List of (start, end, label) tuples
-            tag_type: 'unified', 'target', or 'opinion'
-        Returns:
-            List of BIO tags
-        """
         tags = ['O'] * len(tokens)
         
         for start_idx, end_idx, label in spans:
@@ -351,7 +264,6 @@ class ASTEDataConverter:
             end_idx = min(end_idx, len(tokens) - 1)
             
             if tag_type == 'unified':
-                # Use sentiment-aware tags
                 if start_idx == end_idx:
                     tags[start_idx] = f'S-{label}'
                 else:
@@ -361,7 +273,6 @@ class ASTEDataConverter:
                     tags[end_idx] = f'E-{label}'
             
             elif tag_type in ['target', 'opinion']:
-                # Use simple BIES tags
                 if start_idx == end_idx:
                     tags[start_idx] = 'S'
                 else:
@@ -374,15 +285,6 @@ class ASTEDataConverter:
     
     def convert_to_aste_format(self, sentences: List[Dict], 
                                extract_opinions: bool = True) -> List[Dict]:
-        """
-        Convert sentences to ASTE format
-        
-        Args:
-            sentences: List of parsed sentences
-            extract_opinions: Whether to extract opinions heuristically
-        Returns:
-            List of ASTE formatted samples
-        """
         parser = SemEvalParser()
         aste_data = []
         
@@ -390,10 +292,8 @@ class ASTEDataConverter:
             text = sent_data['text']
             aspects = sent_data['aspects']
             
-            # Tokenize
             tokens, offsets = self.tokenize_sentence(text)
             
-            # Process aspects
             aspect_spans = []
             target_spans = []
             
@@ -402,14 +302,12 @@ class ASTEDataConverter:
                 end_char = aspect['to']
                 sentiment = self.sentiment_map.get(aspect['polarity'].lower(), 'NEU')
                 
-                # Align to tokens
                 start_tok, end_tok = self.align_spans_to_tokens(
                     start_char, end_char, offsets)
                 
                 aspect_spans.append((start_tok, end_tok, sentiment))
                 target_spans.append((start_tok, end_tok, 'TARGET'))
             
-            # Extract opinions
             opinion_spans = []
             if extract_opinions:
                 opinions = parser.extract_opinions_heuristic(text, aspects)
@@ -423,12 +321,10 @@ class ASTEDataConverter:
                     
                     opinion_spans.append((start_tok, end_tok, 'OPINION'))
             
-            # Create tag sequences
             unified_tags = self.create_bio_tags(tokens, aspect_spans, 'unified')
             target_tags = self.create_bio_tags(tokens, target_spans, 'target')
             opinion_tags = self.create_bio_tags(tokens, opinion_spans, 'opinion')
             
-            # Convert to indices
             unified_indices = [self.unified_tags.get(tag, self.unified_tags['O']) 
                              for tag in unified_tags]
             target_indices = [self.target_tags.get(tag, self.target_tags['O']) 
@@ -443,7 +339,7 @@ class ASTEDataConverter:
                 'unified_tags': unified_indices,
                 'target_tags': target_indices, 
                 'opinion_tags': opinion_indices,
-                'tg_tags': target_indices.copy(),  # Target guidance uses same as target
+                'tg_tags': target_indices.copy(),
                 'aspects': aspects,
                 'opinions': opinions if extract_opinions else [],
                 'length': len(tokens)
@@ -453,15 +349,8 @@ class ASTEDataConverter:
 
 
 def create_sample_data(output_dir: str = 'data/'):
-    """
-    Create sample training data for testing
-    
-    Args:
-        output_dir: Directory to save data files
-    """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Sample data
     samples = [
         {
             'text': "The food was delicious but the service was terrible.",
@@ -485,7 +374,6 @@ def create_sample_data(output_dir: str = 'data/'):
         }
     ]
     
-    # Convert to ASTE format
     converter = ASTEDataConverter()
     aste_data = []
     
@@ -494,11 +382,9 @@ def create_sample_data(output_dir: str = 'data/'):
         
     aste_data = converter.convert_to_aste_format(samples)
     
-    # Save as JSON
     with open(os.path.join(output_dir, 'train.json'), 'w') as f:
         json.dump(aste_data, f, indent=2)
     
-    # Create vocabulary
     vocab = {'<PAD>': 0, '<UNK>': 1}
     vocab_idx = 2
     
@@ -517,24 +403,14 @@ def create_sample_data(output_dir: str = 'data/'):
 
 
 def convert_semeval_data(xml_path: str, output_dir: str):
-    """
-    Convert SemEval XML data to ASTE format
-    
-    Args:
-        xml_path: Path to SemEval XML file
-        output_dir: Directory to save converted data
-    """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Parse XML
     parser = SemEvalParser()
     sentences = parser.parse_xml_file(xml_path)
     
-    # Convert to ASTE format
     converter = ASTEDataConverter()
     aste_data = converter.convert_to_aste_format(sentences)
     
-    # Save data
     output_file = os.path.join(output_dir, f"{os.path.basename(xml_path).split('.')[0]}.json")
     
     with open(output_file, 'w') as f:
@@ -550,10 +426,8 @@ if __name__ == '__main__':
     import sys
     
     if len(sys.argv) > 2:
-        # Convert SemEval data
         xml_path = sys.argv[1]
         output_dir = sys.argv[2]
         convert_semeval_data(xml_path, output_dir)
     else:
-        # Create sample data
         create_sample_data()
