@@ -59,7 +59,10 @@ The code will automatically use `glove.840B.300d.txt` if available, otherwise fa
 ### 3. Data Setup
 
 The SemEval datasets should be in `data/` directory:
-
+```bash
+git clone https://github.com/xuuuluuu/SemEval-Triplet-data.git
+```
+Navigate to the ASTE-Data-V1-AAAI2020 folder and set it up in the following format
 ```
 data/
 ├── 14res/
